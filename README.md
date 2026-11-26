@@ -81,10 +81,18 @@ Everything lives in `config.yaml`:
 - `behavior` — reply delays, typo chance, edit delay, message splitting, batching
 - `persona` — the bot's name, personality and background
 
-## Keyless search and media
+## Web search
+
+Use `!search <query>` or say `search the web for <query>` in a whitelisted server or DM. WeirdlyBot can also search on its own during chat. It answers from search snippets and posts numbered source links. If the AI summary fails, it still posts the links.
+
+- **Default (no API key):** Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and make sure `uv` is on your PATH. WeirdlyBot runs a pinned DDGS search script. To install its dependencies before the first search, run `uv sync --script scripts/web-search.py`.
+- **Optional SearXNG:** Set `SEARXNG_URL` in `.env` to the base URL of your SearXNG server with JSON output enabled. This replaces DDGS and doesn't need uv.
+
+Queries are sent to the configured search service, so don't include secrets.
+
+## Media and image reading
 
 - GIFs come from Wikimedia Commons, no key required.
-- Ask the bot to look something up. It searches Wikipedia by default and includes sources. For general web results, set `SEARXNG_URL` in `.env` to the base URL of a SearXNG instance with JSON output enabled. No search API key is needed.
 - WeirdlyBot doesn't add watermarks to generated media. Discord uploads include the model ID.
 - If Discord can't upload generated media, WeirdlyBot tries Catbox, then Litterbox and Tmpfiles. Catbox links don't automatically expire; the other two expire after an hour. Anyone with the link can download the file. Set `behavior.media_host_fallback: false` to keep media on Discord only.
 - The bot can see Discord image attachments on turns it responds to. Ask it to extract text from a screenshot, or reply to the message containing the image. OCR replies skip the bot's typo and message-splitting effects.
