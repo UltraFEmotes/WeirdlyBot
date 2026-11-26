@@ -35,6 +35,19 @@ npm install
 npm start
 ```
 
+## AI API: Flama
+
+WeirdlyBot uses Flama's OpenAI-compatible API at **`https://ai.tryflama.com/v1`**. This is the base URL already set in `config.yaml.example`:
+
+```yaml
+ai:
+  openai:
+    base_url: "https://ai.tryflama.com/v1"
+    api_key_env: "FLAMA_API_KEY"
+```
+
+Keep `/v1` in the URL, but don't append an endpoint like `/chat/completions`. WeirdlyBot adds the endpoint for chat, images, or video. Use your own Flama API key in `.env` as `FLAMA_API_KEY`; it is separate from your Discord token.
+
 ## Public media commands
 
 Anyone can use these in a whitelisted server or DM, without pinging the AI:
