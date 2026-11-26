@@ -40,7 +40,7 @@ behavior:
   typo_chance: 0.18
   message_split_chance: 0.25
   max_message_chars: 1200
-  media_host_fallback: true  # Public one-hour Litterbox link if Discord cannot upload the file
+  media_host_fallback: true  # Public Catbox download link if Discord cannot upload the file
   engagement_timeout_minutes: 10
 
 persona:

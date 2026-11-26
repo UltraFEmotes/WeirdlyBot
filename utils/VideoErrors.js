@@ -14,7 +14,8 @@ export function videoFailureMessage(error) {
   if (error.videoStatus === 429) return "Flama's video service is rate-limited. Try again later.";
   if (error.videoStatus >= 500) return "Flama's video service is having trouble. Try again later.";
   if (error.videoStatus === 401 || error.videoStatus === 403) return "Flama didn't authorize video generation. Check the API key and its permissions.";
-  if (error.message === "discord refused the upload") return "The video was generated, but I couldn't deliver it.";
+  if (error instanceof MediaDeliveryError) return "The video was generated, but I couldn't deliver it.";
   if (error.message?.startsWith("video too large")) return "The video was generated, but it's too large to upload to Discord.";
   return "Couldn't generate the video.";
 }
+import { MediaDeliveryError } from "./MediaDelivery.js";

@@ -40,7 +40,7 @@ import AIManager from "../utils/AIManager.js";
 import { handleMediaCommand } from "../utils/MediaCommands.js";
 import { handleVoiceCommand } from "../utils/VoiceChat.js";
 import { IMAGE_MODELS, VIDEO_MODELS, selectMediaModel } from "../utils/MediaOptions.js";
-import { deliverMedia } from "../utils/MediaDelivery.js";
+import { deliverMedia, MediaDeliveryError } from "../utils/MediaDelivery.js";
 import { searchWeb } from "../utils/WebSearch.js";
 import { videoFailureMessage } from "../utils/VideoErrors.js";
 import { collectChatImages, hasChatImage, imageMessageContent, isImageAttachment, refersToImage, wantsImageText } from "../utils/ChatImages.js";
@@ -672,12 +672,13 @@ async function processBatch(client, key) {
         status = await channel.send("generating the image, one sec 🎨").catch(() => null);
         const image = await AIManager.generateImage(prompt, { model });
         log(`image generated (${(image.buffer.length / 1024).toFixed(0)} KB), sending...`, "debug");
-        const sent = await sendMediaFile(channel, image, `image.${image.extension}`);
-        if (!sent) throw new Error("discord refused the upload");
+        await sendMediaFile(channel, image, `image.${image.extension}`);
         if (status) status.delete().catch(() => {});
       } catch (error) {
         log(`image generation failed — ${error.message}`, "warn");
-        if (status) await status.edit("couldn't generate the image, sorry 😅").catch(() => {});
+        if (status) await status.edit(error instanceof MediaDeliveryError
+          ? "The image was generated, but I couldn't deliver it."
+          : "Couldn't generate the image.").catch(() => {});
       }
     }
 
@@ -692,13 +693,14 @@ async function processBatch(client, key) {
         }
         status = await channel.send("editing the image, one sec 🎨").catch(() => null);
         const image = await AIManager.generateImage(prompt, { references: referenceImages, model });
-        const sent = await sendMediaFile(channel, image, `edited.${image.extension}`);
-        if (!sent) throw new Error("discord refused the upload");
+        await sendMediaFile(channel, image, `edited.${image.extension}`);
         if (status) status.delete().catch(() => {});
       } catch (error) {
         log(`image edit failed — ${error.message}`, "warn");
         if (status) {
-          await status.edit("couldn't edit the image, sorry 😅").catch(() => {});
+          await status.edit(error instanceof MediaDeliveryError
+            ? "The image was edited, but I couldn't deliver it."
+            : "Couldn't edit the image.").catch(() => {});
         } else if (error.message === "no image was attached to edit") {
           await channel.send("you didn't attach an image to edit lol").catch(() => {});
         }
@@ -715,8 +717,7 @@ async function processBatch(client, key) {
         log(`generating video${duration ? ` (${duration}s)` : ""}: "${prompt.slice(0, 80)}"...`, "debug");
         const video = await AIManager.generateVideo(prompt, { resolution: "720p", duration, model });
         log(`video generated (${(video.buffer.length / 1024 / 1024).toFixed(1)} MB), sending...`, "debug");
-        const sent = await sendMediaFile(channel, video, "video.mp4", true);
-        if (!sent) throw new Error("discord refused the upload");
+        await sendMediaFile(channel, video, "video.mp4", true);
         if (status) status.delete().catch(() => {});
       } catch (error) {
         log(`video generation failed — ${error.message}`, "warn");
@@ -738,8 +739,7 @@ async function processBatch(client, key) {
         log(`animating attached image${duration ? ` (${duration}s)` : ""}: "${prompt.slice(0, 80)}"...`, "debug");
         const video = await AIManager.generateVideo(prompt, { references: referenceImages, resolution: "720p", duration, model });
         log(`animated video generated (${(video.buffer.length / 1024 / 1024).toFixed(1)} MB), sending...`, "debug");
-        const sent = await sendMediaFile(channel, video, "video.mp4", true);
-        if (!sent) throw new Error("discord refused the upload");
+        await sendMediaFile(channel, video, "video.mp4", true);
         if (status) status.delete().catch(() => {});
       } catch (error) {
         log(`video animation failed — ${error.message}`, "warn");
@@ -891,17 +891,10 @@ function cleanContent(client, message) {
 
 /**
  * Send a generated media file to a channel.
- * Returns true on success; on failure logs the real Discord error and returns
- * false so the caller can surface it in the status message.
+ * Try Discord first, then deliver a temporary link if needed.
  */
 async function sendMediaFile(channel, media, name, video = false) {
-  try {
-    await deliverMedia({ media, name, video, sendFile: (payload) => channel.send(payload) });
-    return true;
-  } catch (error) {
-    log(`failed to send ${name} — ${error.message}`, "warn");
-    return false;
-  }
+  await deliverMedia({ media, name, video, sendFile: (payload) => channel.send(payload) });
 }
 
 /**
