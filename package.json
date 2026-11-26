@@ -1,0 +1,33 @@
+{
+  "name": "weirdlybot",
+  "version": "2.0.0",
+  "description": "A Discord AI assistant with chat, voice, and media tools",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env index.js",
+    "dev": "node --env-file-if-exists=.env --inspect index.js"
+  },
+  "keywords": [],
+  "author": "github.com/faiz4sure",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "@google/genai": "^2.10.0",
+    "@lng2004/discord.js-selfbot-v13": "latest",
+    "axios": "^1.10.0",
+    "chalk": "^5.4.1",
+    "discord.js": "^14.28.1",
+    "figlet": "^1.8.2",
+    "gradient-string": "^3.0.0",
+    "groq-sdk": "^1.3.0",
+    "js-yaml": "^4.1.0",
+    "openai": "^6.47.0",
+    "opusscript": "^0.0.8",
+    "prism-media": "^1.3.5",
+    "sharp": "^0.35.5"
+  }
+}

@@ -1,0 +1,47 @@
+# Copy this file to config.yaml. Keep your tokens and keys in .env.
+# Official bot mode is recommended. Selfbot mode violates Discord's Terms of Service.
+mode: "bot"
+admin_user_id: ""  # Your Discord user ID, not the bot's ID
+
+bot:
+  token_env: "DISCORD_BOT_TOKEN"
+  status: "online"
+
+selfbot:
+  token_env: "DISCORD_USER_TOKEN"
+  status: "dnd"
+
+debug_mode:
+  enabled: false
+
+ai:
+  default_provider: "openai"
+  provider_chain: ["openai"]
+  image_provider: "openai"
+  video_provider: "openai"
+  openai:
+    enabled: true
+    api_key_env: "FLAMA_API_KEY"
+    base_url: "https://ai.tryflama.com/v1"
+    model: "qwen3.8-27b"
+    image_model: "nano-banana-2-lite"
+    video_model: "gemini-omni-1.2-flash"
+
+voice:
+  tts_path: "/audio"
+  tts_model: "magpie-tts-zeroshot"
+
+behavior:
+  batch_window_ms: 2500
+  min_reply_delay_ms: 700
+  max_reply_delay_ms: 2500
+  min_edit_delay_ms: 2500
+  max_edit_delay_ms: 9000
+  typo_chance: 0.18
+  message_split_chance: 0.25
+  max_message_chars: 1200
+  media_host_fallback: true  # Public one-hour Litterbox link if Discord cannot upload the file
+  engagement_timeout_minutes: 10
+
+persona:
+  name: "WeirdlyBot"
