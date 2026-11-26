@@ -15,6 +15,23 @@ export function hasChatImage(message) {
   return [...(message.attachments?.values() || [])].some(isImageAttachment);
 }
 
+export function getDiscordImageUrls(messages) {
+  const urls = new Set();
+  for (const message of messages) {
+    for (const attachment of message.attachments?.values() || []) {
+      if (!isImageAttachment(attachment)) continue;
+      try {
+        const url = new URL(attachment.url);
+        if (url.protocol !== "https:" || !DISCORD_CDN.has(url.hostname) || url.port || url.username ||
+            url.password || !url.pathname.startsWith("/attachments/")) continue;
+        urls.add(url.href);
+        if (urls.size >= MAX_IMAGES) return [...urls];
+      } catch { /* skip malformed attachment URL */ }
+    }
+  }
+  return [...urls];
+}
+
 export function wantsImageText(text) {
   return /\b(?:ocr|transcrib(?:e|ing)|(?:extract|read|copy|pull|get)\b.{0,25}\b(?:the\s+)?text|what(?:'s| is) written|what (?:does|do) (?:this|that|it|the image|the screenshot) say)\b/i.test(text);
 }

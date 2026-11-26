@@ -39,11 +39,11 @@ import { log, loadConfig, wait } from "../utils/functions.js";
 import AIManager from "../utils/AIManager.js";
 import { handleMediaCommand } from "../utils/MediaCommands.js";
 import { handleVoiceCommand } from "../utils/VoiceChat.js";
-import { IMAGE_MODELS, VIDEO_MODELS, selectMediaModel } from "../utils/MediaOptions.js";
+import { chatMediaModels, hasH3LabKey, h3LabModelId, selectMediaModel } from "../utils/MediaOptions.js";
 import { deliverMedia, MediaDeliveryError } from "../utils/MediaDelivery.js";
 import { searchWeb } from "../utils/WebSearch.js";
 import { videoFailureMessage } from "../utils/VideoErrors.js";
-import { collectChatImages, hasChatImage, imageMessageContent, isImageAttachment, refersToImage, wantsImageText } from "../utils/ChatImages.js";
+import { collectChatImages, getDiscordImageUrls, hasChatImage, imageMessageContent, isImageAttachment, refersToImage, wantsImageText } from "../utils/ChatImages.js";
 import { findStatusToolText, isIncompleteStatusRequest, parseStatusFollowup, parseStatusRequest, setCustomStatus } from "../utils/StatusTool.js";
 import axios from "axios";
 import sharp from "sharp";
@@ -438,8 +438,9 @@ PROMPT: <a detailed self-contained english generation prompt — subject, action
 DURATION: <a number of seconds between 1 and 15 if TOOL is video or video_edit, otherwise ->
 MODEL: <an exact model ID for the chosen media type, or - to use the default>
 
-Available image models: ${IMAGE_MODELS.join(", ")}. Default: nano-banana-2-lite.
-Available video models: ${VIDEO_MODELS.join(", ")}. Default: gemini-omni-1.2-flash.
+Available image models: ${chatMediaModels(false).join(", ")}. Default: nano-banana-2-lite.
+Available video models: ${chatMediaModels(true).join(", ")}. Default: gemini-omni-1.2-flash.
+${hasH3LabKey() ? "h3-rio supports 5–10 seconds without references. ltx-distilled supports 1–8 seconds and can animate an attached image." : ""}
 Pick an alternative only if requested or useful; otherwise use the default.
 
 tool meanings:
@@ -650,11 +651,12 @@ async function processBatch(client, key) {
 
     // the user's attached images, converted to data URLs — only fetched when
     // the AI actually invokes an edit tool
-    let referenceImages = null;
-    if (imageEdits.length > 0 || videoEdits.length > 0) {
-      referenceImages = await getReferenceImages(msgs);
-      log(`collected ${referenceImages.length} reference image(s) from attachments`, "debug");
-    }
+    let flamaReferences;
+    const getMediaReferences = async (model, video) => {
+      if (h3LabModelId(model, video)) return { referenceUrls: getDiscordImageUrls(msgs) };
+      flamaReferences ??= await getReferenceImages(msgs);
+      return { references: flamaReferences };
+    };
 
     // generated images (fresh) — status message stays until the file is sent
     for (const raw of images.slice(0, 1)) {
@@ -671,7 +673,7 @@ async function processBatch(client, key) {
         log(`image generation failed — ${error.message}`, "warn");
         if (status) await status.edit(error instanceof MediaDeliveryError
           ? "The image was generated, but I couldn't deliver it."
-          : "Couldn't generate the image.").catch(() => {});
+          : error.publicMessage || "Couldn't generate the image.").catch(() => {});
       }
     }
 
@@ -681,11 +683,12 @@ async function processBatch(client, key) {
       if (!prompt) continue;
       let status = null;
       try {
-        if (!referenceImages || referenceImages.length === 0) {
+        const referenceOptions = await getMediaReferences(model, false);
+        if (!(referenceOptions.references || referenceOptions.referenceUrls)?.length) {
           throw new Error("no image was attached to edit");
         }
         status = await channel.send("editing the image, one sec 🎨").catch(() => null);
-        const image = await AIManager.generateImage(prompt, { references: referenceImages, model });
+        const image = await AIManager.generateImage(prompt, { ...referenceOptions, model });
         await sendMediaFile(channel, image, `edited.${image.extension}`);
         if (status) status.delete().catch(() => {});
       } catch (error) {
@@ -693,7 +696,7 @@ async function processBatch(client, key) {
         if (status) {
           await status.edit(error instanceof MediaDeliveryError
             ? "The image was edited, but I couldn't deliver it."
-            : "Couldn't edit the image.").catch(() => {});
+            : error.publicMessage || "Couldn't edit the image.").catch(() => {});
         } else if (error.message === "no image was attached to edit") {
           await channel.send("you didn't attach an image to edit lol").catch(() => {});
         }
@@ -725,12 +728,13 @@ async function processBatch(client, key) {
       if (!prompt) continue;
       let status = null;
       try {
-        if (!referenceImages || referenceImages.length === 0) {
+        const referenceOptions = await getMediaReferences(model, true);
+        if (!(referenceOptions.references || referenceOptions.referenceUrls)?.length) {
           throw new Error("no image was attached to animate");
         }
         status = await channel.send("animating your image, might take a minute 🎬").catch(() => null);
         log(`animating attached image${duration ? ` (${duration}s)` : ""}: "${prompt.slice(0, 80)}"...`, "debug");
-        const video = await AIManager.generateVideo(prompt, { references: referenceImages, resolution: "720p", duration, model });
+        const video = await AIManager.generateVideo(prompt, { ...referenceOptions, resolution: "720p", duration, model });
         log(`animated video generated (${(video.buffer.length / 1024 / 1024).toFixed(1)} MB), sending...`, "debug");
         await sendMediaFile(channel, video, "video.mp4", true);
         if (status) status.delete().catch(() => {});
@@ -1168,8 +1172,9 @@ who you are:
 
 TOOLS — to use one, put the marker on its own line at the END of your reply. markers are removed before your message is sent, so NEVER mention them in your visible text. at most ONE media tool per reply (image or video, never both).
 Choose a model for a media request by adding "| model=MODEL_ID" at the end of the marker, after the duration for video. Use the requested model if listed; otherwise choose an appropriate one or omit the option to use the default.
-Image models: ${IMAGE_MODELS.join(", ")}. Default: nano-banana-2-lite.
-Video models: ${VIDEO_MODELS.join(", ")}. Default: gemini-omni-1.2-flash.
+Image models: ${chatMediaModels(false).join(", ")}. Default: nano-banana-2-lite.
+Video models: ${chatMediaModels(true).join(", ")}. Default: gemini-omni-1.2-flash.
+${hasH3LabKey() ? "h3-rio supports 5–10 seconds without references. ltx-distilled supports 1–8 seconds and can animate an attached image." : ""}
 CRITICAL: when someone asks you to make/generate/edit/animate a picture, image, video or clip, you MUST include the matching tool marker in THAT reply — never just say you will, never describe it, never apologise for being slow. the tool does the work, your caption just introduces it:
 - [[br]] — send your reply as MULTIPLE separate discord messages, like double texting: place it between two parts of your reply where one message ends and the next begins. use it sometimes when it feels natural — excitement, telling something in bits, adding a second thought — at most 2 per reply and not every time
 - [[react: emoji]] — react to their last message with ONE unicode emoji (e.g. 😭 💀 😂 🔥). use when a reaction says more than words, max once per reply

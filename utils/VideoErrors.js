@@ -7,6 +7,7 @@ export function videoApiError(status, detail, retryHint = "") {
 }
 
 export function videoFailureMessage(error) {
+  if (error.publicMessage) return error.publicMessage;
   if (error.upstreamRejected) {
     return "Flama says its video provider rejected the request without giving a reason. That doesn't confirm the prompt was blocked.";
   }

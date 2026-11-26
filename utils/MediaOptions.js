@@ -1,14 +1,53 @@
-export const IMAGE_MODELS = [
+export const FLAMA_IMAGE_MODELS = [
   "nano-banana", "nano-banana-2", "nano-banana-2-lite", "nano-banana-2.1", "nano-banana-pro",
 ];
 
-export const VIDEO_MODELS = [
+export const FLAMA_VIDEO_MODELS = [
   "gemini-omni-1.1-flash", "gemini-omni-1.2-flash", "gemini-omni-flash-preview",
 ];
 
+export const H3LAB_IMAGE_IDS = [
+  "flux-2-dev", "flux-3-klein", "qwen-image", "fibo-2-t2i", "anima", "moss-nsfw",
+  "qwen-edit-pro", "z-image-turbo", "z-image", "pollinations-flux", "nano-banana-pro",
+  "nano-banana-2-1", "flux2-pro", "gpt-image-2.5-flare", "image5", "flux2-klein",
+  "image4_ultra", "flux-ultra", "gpt-image-2.5-prism", "gen4", "flux-kontext-max",
+  "humain", "ideogram3", "gpt-image-2", "flux-kontext", "qwen-uncensored",
+];
+export const H3LAB_VIDEO_IDS = ["h3-rio", "ltx-distilled"];
+export const H3LAB_IMAGE_MODELS = H3LAB_IMAGE_IDS.map(id => FLAMA_IMAGE_MODELS.includes(id) ? `h3lab/${id}` : id);
+export const H3LAB_VIDEO_MODELS = H3LAB_VIDEO_IDS;
+export const IMAGE_MODELS = [...FLAMA_IMAGE_MODELS, ...H3LAB_IMAGE_MODELS];
+export const VIDEO_MODELS = [...FLAMA_VIDEO_MODELS, ...H3LAB_VIDEO_MODELS];
+
+export function hasH3LabKey() {
+  return Boolean(process.env.H3LAB_API_KEY?.trim());
+}
+
+export function chatMediaModels(video) {
+  return hasH3LabKey() ? (video ? VIDEO_MODELS : IMAGE_MODELS)
+    : (video ? FLAMA_VIDEO_MODELS : FLAMA_IMAGE_MODELS);
+}
+
+export function h3LabModelId(value, video) {
+  if (!value) return undefined;
+  const ids = video ? H3LAB_VIDEO_IDS : H3LAB_IMAGE_IDS;
+  const flama = video ? FLAMA_VIDEO_MODELS : FLAMA_IMAGE_MODELS;
+  if (value.startsWith("h3lab/")) {
+    const id = value.slice("h3lab/".length);
+    return ids.includes(id) ? id : undefined;
+  }
+  return !flama.includes(value) && ids.includes(value) ? value : undefined;
+}
+
 export function selectMediaModel(value, video) {
   const model = value?.trim().toLowerCase();
-  return (video ? VIDEO_MODELS : IMAGE_MODELS).includes(model) ? model : undefined;
+  const flama = video ? FLAMA_VIDEO_MODELS : FLAMA_IMAGE_MODELS;
+  if (model?.startsWith("flama/") && flama.includes(model.slice(6))) return model.slice(6);
+  return flama.includes(model) || h3LabModelId(model, video) ? model : undefined;
+}
+
+export function h3VideoDuration(model) {
+  return model === "h3-rio" ? { min: 5, max: 10 } : { min: 1, max: 8 };
 }
 
 export function mediaModelLabel(video, model) {
@@ -45,5 +84,13 @@ export function parseMediaCommand(input, video) {
   }).trim();
 
   if (!prompt || prompt.length > 16000) throw new Error("Enter a prompt of 1–16,000 characters.");
+  const h3Model = h3LabModelId(options.model, video);
+  if (video && h3Model) {
+    const { min, max } = h3VideoDuration(h3Model);
+    if (seen.has("quality") || seen.has("size")) throw new Error(`${h3Model} uses its own video size and quality. Omit those flags.`);
+    if (options.duration != null && (options.duration < min || options.duration > max)) {
+      throw new Error(`${h3Model} supports ${min}–${max} seconds.`);
+    }
+  }
   return { prompt, options };
 }

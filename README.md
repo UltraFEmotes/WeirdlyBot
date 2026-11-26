@@ -61,6 +61,17 @@ All flags are optional. `--size` is an aspect ratio, `--quality` is video resolu
 
 Use `!modellist` to see the bot's image and video model choices and their defaults.
 
+### Optional h3lab media models
+
+Set `H3LAB_API_KEY` in `.env` and restart to use the additional models listed by `!modellist`. Existing Flama models and defaults are unchanged. For example:
+
+```text
+!imggen a forest at sunrise --model flux-2-dev
+!vidgen a balloon floating upward --model h3-rio --duration 8
+```
+
+Use `h3lab/nano-banana-pro` for the h3lab version; bare `nano-banana-pro` still uses Flama. `h3-rio` accepts 5–10 seconds, and `ltx-distilled` accepts 1–8 seconds and can animate an attached image. These models choose their own video size and quality. For h3lab edits, attach the image in Discord; the bot passes its Discord attachment URL to h3lab.
+
 Anyone in a whitelisted server or DM can say `change your status to "Listening to music"` to set the account's custom status text. This doesn't change its online/away setting.
 
 ## Admin commands

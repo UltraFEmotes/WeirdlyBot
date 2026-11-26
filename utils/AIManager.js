@@ -15,6 +15,8 @@ import { GoogleGenAI } from "@google/genai";
 import OpenAI from "openai";
 import axios from "axios";
 import { videoApiError } from "./VideoErrors.js";
+import { generateH3LabMedia } from "./H3Lab.js";
+import { h3LabModelId } from "./MediaOptions.js";
 const DEFAULT_IMAGE_MODEL = "nano-banana-2-lite";
 const DEFAULT_VIDEO_MODEL = "gemini-omni-1.2-flash";
 
@@ -25,14 +27,15 @@ function getApiKey(config) {
 }
 
 const IMAGE_SIGNATURES = [
-  { mime: "image/webp", extension: "webp", test: (b) => b.subarray(0, 4).toString("ascii") === "RIFF" },
+  { mime: "image/webp", extension: "webp", test: (b) => b.subarray(0, 4).toString("ascii") === "RIFF" && b.subarray(8, 12).toString("ascii") === "WEBP" },
   { mime: "image/png", extension: "png", test: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
   { mime: "image/jpeg", extension: "jpg", test: (b) => b[0] === 0xff && b[1] === 0xd8 },
   { mime: "image/gif", extension: "gif", test: (b) => b.subarray(0, 3).toString("ascii") === "GIF" }
 ];
 
-function detectImageType(buffer) {
+function detectImageType(buffer, strict = false) {
   const match = IMAGE_SIGNATURES.find((signature) => signature.test(buffer));
+  if (!match && strict) throw new Error("The provider didn't return a recognized image.");
   return match ? { mime: match.mime, extension: match.extension } : { mime: "image/png", extension: "png" };
 }
 
@@ -281,6 +284,11 @@ class AIManager {
 
     const baseUrl = (options.baseUrl || providerConfig.base_url || "").replace(/\/+$/, "");
     const model = options.model || providerConfig.image_model || DEFAULT_IMAGE_MODEL;
+    const h3Model = h3LabModelId(model, false);
+    if (h3Model) {
+      const buffer = await generateH3LabMedia(h3Model, prompt, false, options);
+      return { buffer, ...detectImageType(buffer, true), model, prompt: prompt.trim() };
+    }
     const apiKey = getApiKey(providerConfig);
     if (!baseUrl || !apiKey) throw new Error(`Image provider "${provider}" requires a base URL and API key.`);
     const timeout = options.timeout ?? 180000;
@@ -354,6 +362,12 @@ class AIManager {
 
     const baseUrl = (options.baseUrl || providerConfig.base_url || "").replace(/\/+$/, "");
     const model = options.model || providerConfig.video_model || DEFAULT_VIDEO_MODEL;
+    const h3Model = h3LabModelId(model, true);
+    if (h3Model) {
+      const buffer = await generateH3LabMedia(h3Model, prompt, true, options);
+      if (buffer.subarray(4, 8).toString("ascii") !== "ftyp") throw new Error("h3lab didn't return an MP4.");
+      return { buffer, mime: "video/mp4", extension: "mp4", model, prompt: prompt.trim() };
+    }
     const apiKey = getApiKey(providerConfig);
     if (!baseUrl || !apiKey) throw new Error(`Video provider "${provider}" requires a base URL and API key.`);
     const timeout = options.timeout ?? 360000;

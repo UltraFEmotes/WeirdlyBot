@@ -1,6 +1,8 @@
 import AIManager from "./AIManager.js";
 import { loadConfig, log } from "./functions.js";
-import { IMAGE_MODELS, VIDEO_MODELS, parseMediaCommand } from "./MediaOptions.js";
+import { FLAMA_IMAGE_MODELS, FLAMA_VIDEO_MODELS, H3LAB_IMAGE_MODELS, H3LAB_VIDEO_MODELS,
+  h3LabModelId, hasH3LabKey, parseMediaCommand } from "./MediaOptions.js";
+import { getDiscordImageUrls } from "./ChatImages.js";
 import { videoFailureMessage } from "./VideoErrors.js";
 import { deliverMedia } from "./MediaDelivery.js";
 
@@ -18,13 +20,22 @@ export async function handleMediaCommand(message) {
     const ai = loadConfig().ai;
     const imageDefault = ai?.[ai.image_provider || "openai"]?.image_model || "nano-banana-2-lite";
     const videoDefault = ai?.[ai.video_provider || "openai"]?.video_model || "gemini-omni-1.2-flash";
-    const format = (models, defaultModel) => [...new Set([...models, defaultModel])]
+    const format = (models, defaultModel) => [...new Set(defaultModel ? [...models, defaultModel] : models)]
       .map((model) => `• \`${model}\`${model === defaultModel ? " **(default)**" : ""}`)
       .join("\n");
+    const group = (provider, title, models, defaultModel) => `**${provider} ${title} models**\n${format(models, defaultModel)}`;
     await send([
-      `**Image models** (\`!imggen\`)\n${format(IMAGE_MODELS, imageDefault)}`,
-      `**Video models** (\`!vidgen\`)\n${format(VIDEO_MODELS, videoDefault)}`,
-      "Use `--model <id>` to pick one. These are the bot's configured choices; provider availability may vary.",
+      group("Flama", "image", FLAMA_IMAGE_MODELS, h3LabModelId(imageDefault, false) ? undefined : imageDefault),
+      group("Flama", "video", FLAMA_VIDEO_MODELS, h3LabModelId(videoDefault, true) ? undefined : videoDefault),
+      "Use `--model <id>` with `!imggen` or `!vidgen`.",
+    ].join("\n\n")).catch(() => {});
+    const formatH3 = (models, defaultModel) => models
+      .map(model => `• \`${model}\`${model === defaultModel ? " **(default)**" : ""}`).join("\n");
+    await send([
+      `**h3lab image models**\n${formatH3(H3LAB_IMAGE_MODELS, imageDefault)}`,
+      `**h3lab video models**\n${formatH3(H3LAB_VIDEO_MODELS, videoDefault)}`,
+      hasH3LabKey() ? "h3lab is configured; provider availability may vary."
+        : "To enable h3lab, set `H3LAB_API_KEY` in `.env` and restart.",
     ].join("\n\n")).catch(() => {});
     return true;
   }
@@ -55,6 +66,7 @@ export async function handleMediaCommand(message) {
   try {
     status = await send(video ? "🎬 Generating your video…" : "🎨 Generating your image…");
     const { prompt, options } = request;
+    if (h3LabModelId(options.model, video)) options.referenceUrls = getDiscordImageUrls([message]);
     const media = video
       ? await AIManager.generateVideo(prompt, options)
       : await AIManager.generateImage(prompt, options);
@@ -71,7 +83,7 @@ export async function handleMediaCommand(message) {
     log(`!${match[1]}: could not ${stage} — ${error.message}`, "warn");
     const note = stage === "upload"
       ? `The ${kind} was generated, but I couldn't deliver it. Try a smaller output.`
-      : video ? videoFailureMessage(error) : "Couldn't generate the image. Try a different prompt or model.";
+      : error.publicMessage || (video ? videoFailureMessage(error) : "Couldn't generate the image. Try a different prompt or model.");
     if (status) await status.edit(note).catch(() => send(note).catch(() => {}));
     else await send(note).catch(() => {});
   } finally {
