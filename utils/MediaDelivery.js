@@ -69,18 +69,29 @@ async function uploadHostedFile(media, name) {
   throw new Error(errors.join("; "));
 }
 
-export async function deliverMedia({ media, name, video, sendFile, sendLink = sendFile }) {
+export async function deliverMedia({ media, name, video, sendFile, sendLink = sendFile, editFile }) {
   const label = mediaModelLabel(video, media.model);
   const limit = (video ? 25 : 8) * 1024 * 1024;
+  const payload = () => ({
+    content: label,
+    files: [{ attachment: media.buffer, name, description: (media.prompt || "").slice(0, 100) }],
+    allowedMentions: NO_MENTIONS,
+  });
   let discordError;
   try {
     if (media.buffer.length > limit) throw new Error("File exceeds the Discord upload limit.");
-    await sendFile({
-      content: label,
-      files: [{ attachment: media.buffer, name, description: (media.prompt || "").slice(0, 100) }],
-      allowedMentions: NO_MENTIONS,
-    });
-    return;
+    // editing an existing message (the status) into the delivery keeps
+    // slowmode channels to a single send; a failed edit falls back to a send
+    if (editFile) {
+      try {
+        await editFile(payload());
+        return { edited: true };
+      } catch (error) {
+        discordError = error;
+      }
+    }
+    await sendFile(payload());
+    return { edited: false };
   } catch (error) {
     discordError = error;
   }

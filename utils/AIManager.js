@@ -26,6 +26,39 @@ function getApiKey(config) {
   return config?.api_key_env ? process.env[config.api_key_env]?.trim() : config?.api_key;
 }
 
+function parseSseDataLines(raw) {
+  const events = [];
+  for (const line of String(raw).split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      events.push(JSON.parse(data));
+    } catch {
+      // Ignore malformed keep-alive chunks.
+    }
+  }
+  return events;
+}
+
+/**
+ * Extract reply text from an OpenAI-compatible chat completion. Some models
+ * (e.g. gemini-4-neon) answer non-streaming requests with an SSE body of
+ * chat.completion.chunk events, so handle that shape too.
+ */
+function openAiResponseText(response) {
+  if (typeof response === "string") {
+    let text = "";
+    for (const chunk of parseSseDataLines(response)) {
+      const choice = chunk?.choices?.[0];
+      text += choice?.delta?.content || choice?.message?.content || choice?.text || "";
+    }
+    return text || undefined;
+  }
+  const choice = response?.choices?.[0];
+  return choice?.message?.content ?? choice?.text ?? undefined;
+}
+
 const IMAGE_SIGNATURES = [
   { mime: "image/webp", extension: "webp", test: (b) => b.subarray(0, 4).toString("ascii") === "RIFF" && b.subarray(8, 12).toString("ascii") === "WEBP" },
   { mime: "image/png", extension: "png", test: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) },
@@ -155,6 +188,7 @@ class AIManager {
    * @param {string[]} providerChain
    * @param {Object} [options]
    * @param {number} [options.maxTokens] - cap output tokens (used by the fast relevance judge)
+   * @param {number} [options.timeoutMs] - per-request timeout override in ms (long generations like !code)
    * @returns {Promise<{text: string, provider: string}>}
    */
   async chainGenerateWithHistory(messages, providerChain, options = {}) {
@@ -178,8 +212,12 @@ class AIManager {
         if (provider === "groq" || provider === "openai") {
           const request = { model, messages };
           if (options.maxTokens) request.max_tokens = options.maxTokens;
-          const response = await client.chat.completions.create(request);
-          text = response.choices[0].message.content;
+          const response = await client.chat.completions.create(request, options.timeoutMs ? { timeout: options.timeoutMs } : undefined);
+          text = openAiResponseText(response);
+          if (typeof text !== "string") {
+            const detail = JSON.stringify(response)?.slice(0, 300) || "empty response";
+            throw new Error(`Unexpected ${provider} response shape: ${detail}`);
+          }
         } else if (provider === "gemini") {
           const systemMsg = messages.find(m => m.role === "system");
           const systemInstruction = systemMsg ? systemMsg.content : undefined;
@@ -201,6 +239,9 @@ class AIManager {
           }
           if (options.maxTokens) {
             requestConfig.maxOutputTokens = options.maxTokens;
+          }
+          if (options.timeoutMs) {
+            requestConfig.httpOptions = { timeout: options.timeoutMs };
           }
 
           const response = await client.models.generateContent({

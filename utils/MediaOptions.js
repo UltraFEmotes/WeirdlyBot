@@ -6,6 +6,9 @@ export const FLAMA_VIDEO_MODELS = [
   "gemini-omni-1.1-flash", "gemini-omni-1.2-flash", "gemini-omni-flash-preview",
 ];
 
+// Temporarily disabled - set to false to re-enable H3Lab media models.
+const H3LAB_TEMP_DISABLED = true;
+
 export const H3LAB_IMAGE_IDS = [
   "flux-2-dev", "flux-3-klein", "qwen-image", "fibo-2-t2i", "anima", "moss-nsfw",
   "qwen-edit-pro", "z-image-turbo", "z-image", "pollinations-flux", "nano-banana-pro",
@@ -14,13 +17,13 @@ export const H3LAB_IMAGE_IDS = [
   "humain", "ideogram3", "gpt-image-2", "flux-kontext", "qwen-uncensored",
 ];
 export const H3LAB_VIDEO_IDS = ["h3-rio", "ltx-distilled"];
-export const H3LAB_IMAGE_MODELS = H3LAB_IMAGE_IDS.map(id => FLAMA_IMAGE_MODELS.includes(id) ? `h3lab/${id}` : id);
-export const H3LAB_VIDEO_MODELS = H3LAB_VIDEO_IDS;
+export const H3LAB_IMAGE_MODELS = H3LAB_TEMP_DISABLED ? [] : H3LAB_IMAGE_IDS.map(id => FLAMA_IMAGE_MODELS.includes(id) ? `h3lab/${id}` : id);
+export const H3LAB_VIDEO_MODELS = H3LAB_TEMP_DISABLED ? [] : H3LAB_VIDEO_IDS;
 export const IMAGE_MODELS = [...FLAMA_IMAGE_MODELS, ...H3LAB_IMAGE_MODELS];
 export const VIDEO_MODELS = [...FLAMA_VIDEO_MODELS, ...H3LAB_VIDEO_MODELS];
 
 export function hasH3LabKey() {
-  return Boolean(process.env.H3LAB_API_KEY?.trim());
+  return !H3LAB_TEMP_DISABLED && Boolean(process.env.H3LAB_API_KEY?.trim());
 }
 
 export function chatMediaModels(video) {
@@ -29,7 +32,7 @@ export function chatMediaModels(video) {
 }
 
 export function h3LabModelId(value, video) {
-  if (!value) return undefined;
+  if (H3LAB_TEMP_DISABLED || !value) return undefined;
   const ids = video ? H3LAB_VIDEO_IDS : H3LAB_IMAGE_IDS;
   const flama = video ? FLAMA_VIDEO_MODELS : FLAMA_IMAGE_MODELS;
   if (value.startsWith("h3lab/")) {
@@ -44,6 +47,34 @@ export function selectMediaModel(value, video) {
   const flama = video ? FLAMA_VIDEO_MODELS : FLAMA_IMAGE_MODELS;
   if (model?.startsWith("flama/") && flama.includes(model.slice(6))) return model.slice(6);
   return flama.includes(model) || h3LabModelId(model, video) ? model : undefined;
+}
+
+const modelWords = (id) => id.replace(/\./g, "\\.").replace(/[-_]/g, "[\\s_-]+");
+function modelRequestPatterns(models, video) {
+  const flama = video ? FLAMA_VIDEO_MODELS : FLAMA_IMAGE_MODELS;
+  const h3lab = video ? H3LAB_VIDEO_IDS : H3LAB_IMAGE_IDS;
+  const ids = [...new Set([...models, ...flama.map(id => `flama/${id}`), ...h3lab.map(id => `h3lab/${id}`)])];
+  return ids.sort((a, b) => b.length - a.length).map(id => ({
+    id: selectMediaModel(id, video),
+    pattern: new RegExp(`\\b(?:using|use|with|via|model\\s*[:=])\\s*[\`"']?${modelWords(id)}(?![\\w/]|[-.]\\w)`, "gi"),
+  }));
+}
+const IMAGE_MODEL_REQUESTS = modelRequestPatterns(IMAGE_MODELS, false);
+const VIDEO_MODEL_REQUESTS = modelRequestPatterns(VIDEO_MODELS, true);
+
+export function requestedMediaModel(text, video) {
+  const patterns = video ? VIDEO_MODEL_REQUESTS : IMAGE_MODEL_REQUESTS;
+  let selected;
+  let index = -1;
+  for (const { id, pattern } of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      if (match.index > index) {
+        selected = id;
+        index = match.index;
+      }
+    }
+  }
+  return selected;
 }
 
 export function h3VideoDuration(model) {

@@ -13,8 +13,12 @@ Official bot mode is recommended. Selfbots violate Discord's Terms of Service an
 - If someone **attaches an image**, the AI can **edit it** or **animate it into a video** — attachments are **always converted** before use (sharp: decoded, downscaled to ≤1536px, re-encoded as compact JPEG; fallback to Discord's media proxy for conversion), since the video model rejects large references with a generic 400
 - The AI picks video length itself (**1-15s**), and shows a **status message** ("generating the image, one sec 🎨") while media renders — deleted when done, turned into a failure note if generation fails
 - Media requests retry on HTTP 429/502/503 and retry HTTP 400 once after at least a minute
+- Respects **slowmode**: in channels with a cooldown the bot waits its turn like a person (its own manual messages count too), sends one message instead of bursts, and edits the status message into the media delivery so a generation costs a single send
 - If the AI narrates generating media but forgets to invoke the tool, a **fallback intent check** catches the request and generates it anyway (prompt + duration derived from the conversation)
 - Keeps per-person conversation history, so follow-ups have context
+- Has **shared memory per server**: what anyone says in one channel (and the bot's replies, last 24h — `behavior.global_memory_hours`) is remembered across that server's channels, so a topic brought up anywhere in the server is known everywhere in it. Each DM conversation keeps its own separate memory, and nothing ever crosses servers or into DMs
+- **Catches up before replying**: when it joins a conversation it wasn't part of (or was quiet for), it reads back the channel messages sent since its own last message — so "isn't that right?" makes sense even when it didn't see what came before
+- **Knows what you replied to**: replying to one of its messages (no ping needed) or to someone else's message passes the quoted text into the prompt — "do you agree?" works even when the quoted message is hours old
 
 ## Setup
 
@@ -101,12 +105,27 @@ Use `!search <query>` or say `search the web for <query>` in a whitelisted serve
 
 Queries are sent to the configured search service, so don't include secrets.
 
+## Code generation
+
+Use `!code <prompt>` in a whitelisted server or DM and the AI writes complete, working code. The code is never executed — it is only delivered as a file with the matching extension (`code.py`, `code.js`, `code.cpp`, …).
+
+```text
+!code python a snake game with pygame
+!code a todo REST API in go --dm
+!code --lang rust --dm a cli password generator
+```
+
+- `--lang <language>` sets the target language; a leading bare language name (`!code python ...`) or a trailing `dm`/`yes` also work. Without a hint, the language is detected from the generated code.
+- `--dm` sends the finished file to your DMs when they are open and falls back to the channel when they are not.
+- Generation runs with priority in the background and a 5-minute limit, so long files don't get cut off.
+
 ## Media and image reading
 
 - GIFs come from Wikimedia Commons, no key required.
 - WeirdlyBot doesn't add watermarks to generated media. Discord uploads include the model ID.
 - If Discord can't upload generated media, WeirdlyBot tries Catbox, then Litterbox and Tmpfiles. Catbox links don't automatically expire; the other two expire after an hour. Anyone with the link can download the file. Set `behavior.media_host_fallback: false` to keep media on Discord only.
 - The bot can see Discord image attachments on turns it responds to. Ask it to extract text from a screenshot, or reply to the message containing the image. OCR replies skip the bot's typo and message-splitting effects.
+- The bot can also read UTF-8 text attachments (source code, logs, Markdown, CSV, JSON, and similar files). Attach one and ask the bot to read it, or reply to a message with a file and address the bot. It reads up to four files (128 KiB per file, with up to 4,000 characters from each sent to the configured AI provider). It never runs the files or saves their contents to conversation memory. PDF, Office documents, archives, and other binary formats aren't supported.
 
 ## Voice chat
 

@@ -1,10 +1,10 @@
 import AIManager from "./AIManager.js";
 import { loadConfig, log } from "./functions.js";
-import { FLAMA_IMAGE_MODELS, FLAMA_VIDEO_MODELS, H3LAB_IMAGE_MODELS, H3LAB_VIDEO_MODELS,
-  h3LabModelId, hasH3LabKey, parseMediaCommand } from "./MediaOptions.js";
+import { IMAGE_MODELS, VIDEO_MODELS, h3LabModelId, hasH3LabKey, parseMediaCommand } from "./MediaOptions.js";
 import { getDiscordImageUrls } from "./ChatImages.js";
 import { videoFailureMessage } from "./VideoErrors.js";
 import { deliverMedia } from "./MediaDelivery.js";
+import { pacedSend } from "./SlowMode.js";
 
 const activeUsers = new Set();
 const MAX_ACTIVE = 2;
@@ -15,7 +15,7 @@ export async function handleMediaCommand(message) {
   if (!match) return false;
 
   const command = match[1].toLowerCase();
-  const send = (content) => message.channel.send({ content, allowedMentions: NO_MENTIONS });
+  const send = (content) => pacedSend(message.channel, () => message.channel.send({ content, allowedMentions: NO_MENTIONS }));
   if (command === "modellist") {
     const ai = loadConfig().ai;
     const imageDefault = ai?.[ai.image_provider || "openai"]?.image_model || "nano-banana-2-lite";
@@ -23,19 +23,11 @@ export async function handleMediaCommand(message) {
     const format = (models, defaultModel) => [...new Set(defaultModel ? [...models, defaultModel] : models)]
       .map((model) => `• \`${model}\`${model === defaultModel ? " **(default)**" : ""}`)
       .join("\n");
-    const group = (provider, title, models, defaultModel) => `**${provider} ${title} models**\n${format(models, defaultModel)}`;
     await send([
-      group("Flama", "image", FLAMA_IMAGE_MODELS, h3LabModelId(imageDefault, false) ? undefined : imageDefault),
-      group("Flama", "video", FLAMA_VIDEO_MODELS, h3LabModelId(videoDefault, true) ? undefined : videoDefault),
+      `**Image models** (\`!imggen\`)\n${format(IMAGE_MODELS, imageDefault)}`,
+      `**Video models** (\`!vidgen\`)\n${format(VIDEO_MODELS, videoDefault)}`,
       "Use `--model <id>` with `!imggen` or `!vidgen`.",
-    ].join("\n\n")).catch(() => {});
-    const formatH3 = (models, defaultModel) => models
-      .map(model => `• \`${model}\`${model === defaultModel ? " **(default)**" : ""}`).join("\n");
-    await send([
-      `**h3lab image models**\n${formatH3(H3LAB_IMAGE_MODELS, imageDefault)}`,
-      `**h3lab video models**\n${formatH3(H3LAB_VIDEO_MODELS, videoDefault)}`,
-      hasH3LabKey() ? "h3lab is configured; provider availability may vary."
-        : "To enable h3lab, set `H3LAB_API_KEY` in `.env` and restart.",
+      ...(!hasH3LabKey() ? ["H3Lab models are temporarily disabled."] : []),
     ].join("\n\n")).catch(() => {});
     return true;
   }
@@ -71,14 +63,15 @@ export async function handleMediaCommand(message) {
       ? await AIManager.generateVideo(prompt, options)
       : await AIManager.generateImage(prompt, options);
     stage = "upload";
-    await deliverMedia({
+    const delivered = await deliverMedia({
       media,
       name: `${kind}.${media.extension}`,
       video,
-      sendFile: (payload) => message.reply(payload),
-      sendLink: (payload) => message.channel.send(payload),
+      sendFile: (payload) => pacedSend(message.channel, () => message.reply(payload)),
+      sendLink: (payload) => pacedSend(message.channel, () => message.channel.send(payload)),
+      editFile: status ? (payload) => status.edit(payload) : undefined,
     });
-    await status.delete().catch(() => {});
+    if (status && !delivered?.edited) status.delete().catch(() => {});
   } catch (error) {
     log(`!${match[1]}: could not ${stage} — ${error.message}`, "warn");
     const note = stage === "upload"

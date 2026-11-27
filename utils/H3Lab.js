@@ -1,3 +1,4 @@
+import { setTimeout as wait } from "node:timers/promises";
 import { h3VideoDuration } from "./MediaOptions.js";
 
 const BASE_URL = "https://minimax-h3-api.kizil-gecit.workers.dev";
@@ -161,21 +162,40 @@ async function downloadH3LabFile(url, key, signal) {
   return Buffer.concat(chunks, size);
 }
 
+function retryDelay(response) {
+  const value = response.headers.get("retry-after");
+  if (!value) return 5_000;
+  const delay = /^\d+$/.test(value) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(0, delay) : 5_000;
+}
+
 export async function generateH3LabMedia(model, prompt, video, options = {}) {
   const key = process.env.H3LAB_API_KEY?.trim();
   if (!key) throw new H3LabError("h3lab isn't configured. Set H3LAB_API_KEY in .env and restart the bot.");
   const payload = jobPayload(model, prompt, video, options);
   const signal = AbortSignal.timeout(options.timeout ?? 360_000);
-  let response;
   try {
-    response = await fetch(`${BASE_URL}/v1/${video ? "generate" : "image"}`, {
+    const endpoint = `${BASE_URL}/v1/${video ? "generate" : "image"}`;
+    const startJob = () => fetch(endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", Accept: "text/event-stream" },
       body: JSON.stringify(payload), redirect: "error", signal,
     });
+    let response = await startJob();
+    // Retry only an HTTP 502 before an SSE job starts. Never resubmit an
+    // accepted job or retry a daily quota error.
+    if (response.status === 502) {
+      const delay = retryDelay(response);
+      if (delay <= 30_000) {
+        await response.body?.cancel().catch(() => {});
+        await wait(delay, undefined, { signal });
+        response = await startJob();
+      }
+    }
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
       const note = response.status === 429 ? "h3lab is rate-limited or its daily quota has been reached."
+        : response.status === 502 ? "h3lab's generation engine is temporarily unavailable (HTTP 502). Try again later."
         : `h3lab rejected the request (HTTP ${response.status}).`;
       throw new H3LabError(note);
     }

@@ -23,7 +23,7 @@ ai:
     enabled: true
     api_key_env: "FLAMA_API_KEY"
     base_url: "https://ai.tryflama.com/v1"
-    model: "qwen3.8-27b"
+    model: "gemini-4-neon"
     image_model: "nano-banana-2-lite"
     video_model: "gemini-omni-1.2-flash"
 
@@ -42,6 +42,10 @@ behavior:
   max_message_chars: 1200
   media_host_fallback: true  # Public Catbox download link if Discord cannot upload the file
   engagement_timeout_minutes: 10
+
+  # how long topics stay in the bot's shared memory (scoped per server, and
+  # per dm conversation — nothing crosses servers or into dms). 0 disables it.
+  global_memory_hours: 24
 
 persona:
   name: "WeirdlyBot"
