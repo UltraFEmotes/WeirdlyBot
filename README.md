@@ -11,14 +11,15 @@ Official bot mode is recommended. Selfbots violate Discord's Terms of Service an
 - Makes occasional **typos** and edits the message a few seconds later to correct them
 - Can send **gifs**, **react** to messages, **generate images** (Nano Banana 2 Lite) and **generate videos** (Gemini Omni 1.2 Flash) — the AI invokes these itself
 - If someone **attaches an image**, the AI can **edit it** or **animate it into a video** — attachments are **always converted** before use (sharp: decoded, downscaled to ≤1536px, re-encoded as compact JPEG; fallback to Discord's media proxy for conversion), since the video model rejects large references with a generic 400
-- The AI picks video length itself (**1-15s**), and shows a **status message** ("generating the image, one sec 🎨") while media renders — deleted when done, turned into a failure note if generation fails
+- Tool progress uses reactions instead of filler messages: 🌐 web search, 🎬 video, 🎨 image, 💻 code, 🎞️ GIF lookup, and 🔎 OCR. You can keep chatting while generation runs. If the bot sent a real caption, it edits that message into the result, then replies to it and mentions the requester. Without a caption, it sends one final tagged result directly.
 - Media requests retry on HTTP 429/502/503 and retry HTTP 400 once after at least a minute
-- Respects **slowmode**: in channels with a cooldown the bot waits its turn like a person (its own manual messages count too), sends one message instead of bursts, and edits the status message into the media delivery so a generation costs a single send
+- Respects **slowmode**: the bot waits for the channel cooldown on new messages, including delivery notifications. Reactions and edits don't require another send slot.
 - If the AI narrates generating media but forgets to invoke the tool, a **fallback intent check** catches the request and generates it anyway (prompt + duration derived from the conversation)
 - Keeps per-person conversation history, so follow-ups have context
 - Has **shared memory per server**: what anyone says in one channel (and the bot's replies, last 24h — `behavior.global_memory_hours`) is remembered across that server's channels, so a topic brought up anywhere in the server is known everywhere in it. Each DM conversation keeps its own separate memory, and nothing ever crosses servers or into DMs
 - **Catches up before replying**: when it joins a conversation it wasn't part of (or was quiet for), it reads back the channel messages sent since its own last message — so "isn't that right?" makes sense even when it didn't see what came before
 - **Knows what you replied to**: replying to one of its messages (no ping needed) or to someone else's message passes the quoted text into the prompt — "do you agree?" works even when the quoted message is hours old
+- **Chooses how to reply**: it can post a standalone message, ping the requester, or reply to a quoted or nearby message. For a two-message request like “hi @Alex” and then “AI say hi to them,” it greets Alex directly, replying to their recent message if available.
 
 ## Setup
 
@@ -65,14 +66,14 @@ All flags are optional. `--size` is an aspect ratio, `--quality` is video resolu
 
 Use `!modellist` to see the bot's image and video model choices and their defaults.
 
-For a specific real-world subject, the bot can look up a visual reference when you ask it to make a new image or video. To request one explicitly:
+New images and videos are generated without web references by default. The bot looks them up if you ask, or if you specifically request a faithful depiction of a real-world subject. You can also request separate references explicitly:
 
 ```text
 !imggen a watercolor of the Sydney Opera House at sunset --ref "Sydney Opera House harbour view"
-!vidgen a slow pan up the Eiffel Tower at dawn --duration 5 --ref "Eiffel Tower Champ de Mars"
+!vidgen a slow pan up the Eiffel Tower at dawn --duration 5 --ref "Eiffel Tower Champ de Mars" --ref "Eiffel Tower ironwork close-up"
 ```
 
-The bot tries DuckDuckGo Images via `uv`, then Wikimedia Commons. It sends one reference image to the Flama generator and links the source in the result. This doesn't change how edits to Discord attachments work. Use public search terms, not private information. If automatic lookup finds nothing usable, the bot generates without a reference and says so; an explicit `--ref` request reports the lookup error instead.
+The bot tries DuckDuckGo Images via `uv`, then Wikimedia Commons. Both Flama image and video requests can use up to four distinct references, one per search query, and the bot links the sources it uses. Edits to Discord attachments are unchanged. Use public search terms, not private information. If an optional lookup fails, the bot generates normally without adding a warning; explicit requests report missing results.
 
 ### Optional h3lab media models
 
@@ -132,6 +133,7 @@ Use `!code <prompt>` in a whitelisted server or DM and the AI writes complete, w
 
 - GIFs come from Wikimedia Commons, no key required.
 - WeirdlyBot doesn't add watermarks to generated media. Discord uploads include the model ID.
+- Reply to one of the bot's generated images or videos with “which model made this?” to look up its delivery label. The bot cannot verify whether an outside upload was AI-generated, or name its model, from appearance alone.
 - If Discord can't upload generated media, WeirdlyBot tries Catbox, then Litterbox and Tmpfiles. Catbox links don't automatically expire; the other two expire after an hour. Anyone with the link can download the file. Set `behavior.media_host_fallback: false` to keep media on Discord only.
 - The bot can see Discord image attachments on turns it responds to. Ask it to extract text from a screenshot, or reply to the message containing the image. OCR replies skip the bot's typo and message-splitting effects.
 - The bot can also read UTF-8 text attachments (source code, logs, Markdown, CSV, JSON, and similar files). Attach one and ask the bot to read it, or reply to a message with a file and address the bot. It reads up to four files (128 KiB per file, with up to 4,000 characters from each sent to the configured AI provider). It never runs the files or saves their contents to conversation memory. PDF, Office documents, archives, and other binary formats aren't supported.

@@ -5,7 +5,8 @@ import { getDiscordImageUrls } from "./ChatImages.js";
 import { videoFailureMessage } from "./VideoErrors.js";
 import { deliverMedia } from "./MediaDelivery.js";
 import { pacedSend } from "./SlowMode.js";
-import { webImageReference } from "./WebImageReference.js";
+import { webImageReferences } from "./WebImageReference.js";
+import { reactForTool, toolReply } from "./ToolFeedback.js";
 
 const activeUsers = new Set();
 const MAX_ACTIVE = 2;
@@ -54,34 +55,29 @@ export async function handleMediaCommand(message) {
   }
 
   activeUsers.add(userId);
-  let status;
   let stage = "generate";
   try {
-    status = await send(video ? "🎬 Generating your video…" : "🎨 Generating your image…");
-    const { prompt, options: { webReference, ...options } } = request;
+    await reactForTool(message, kind);
+    const { prompt, options: { webReferences, ...options } } = request;
     if (h3LabModelId(options.model, video)) options.referenceUrls = getDiscordImageUrls([message]);
-    const reference = await webImageReference(webReference, video, options.model, { required: true });
+    const reference = await webImageReferences(webReferences, video, options.model, { required: true });
     Object.assign(options, reference.options);
     const media = video
       ? await AIManager.generateVideo(prompt, options)
       : await AIManager.generateImage(prompt, options);
     stage = "upload";
-    const delivered = await deliverMedia({
+    await deliverMedia({
       media: { ...media, referenceCaption: reference.caption },
       name: `${kind}.${media.extension}`,
       video,
-      sendFile: (payload) => pacedSend(message.channel, () => message.reply(payload)),
-      sendLink: (payload) => pacedSend(message.channel, () => message.channel.send(payload)),
-      editFile: status ? (payload) => status.edit(payload) : undefined,
+      sendFile: (payload) => toolReply(message, payload, { ping: true }),
     });
-    if (status && !delivered?.edited) status.delete().catch(() => {});
   } catch (error) {
     log(`!${match[1]}: could not ${stage} — ${error.message}`, "warn");
     const note = stage === "upload"
       ? `The ${kind} was generated, but I couldn't deliver it. Try a smaller output.`
       : error.publicMessage || (video ? videoFailureMessage(error) : "Couldn't generate the image. Try a different prompt or model.");
-    if (status) await status.edit(note).catch(() => send(note).catch(() => {}));
-    else await send(note).catch(() => {});
+    await toolReply(message, { content: note }).catch(() => {});
   } finally {
     activeUsers.delete(userId);
   }

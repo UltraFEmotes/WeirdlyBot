@@ -15,6 +15,7 @@
 
 import { log, loadConfig } from "./functions.js";
 import AIManager from "./AIManager.js";
+import { reactForTool, toolReply } from "./ToolFeedback.js";
 
 const NO_MENTIONS = { parse: [], repliedUser: false };
 // code generation can easily outlive the provider client's default 30s timeout
@@ -171,11 +172,11 @@ async function generateCode(prompt, language) {
     ? cfg.ai.provider_chain
     : [cfg.ai?.default_provider || "openai"];
   const userContent = language ? `${prompt}\n\n(target language: ${language})` : prompt;
-  const { text } = await AIManager.chainGenerateWithHistory([
+  const { text, provider } = await AIManager.chainGenerateWithHistory([
     { role: "system", content: CODING_SYSTEM_PROMPT },
     { role: "user", content: userContent },
   ], chain, { timeoutMs: GENERATION_TIMEOUT_MS });
-  return buildCodeFile(text);
+  return { ...buildCodeFile(text), model: AIManager.getModel(provider) };
 }
 
 /**
@@ -184,7 +185,8 @@ async function generateCode(prompt, language) {
  */
 async function deliverCode(message, code, shouldDM) {
   const filename = `code.${code.extension}`;
-  const caption = `\`${filename}\` — ${code.language}, ${code.lines} line${code.lines === 1 ? "" : "s"}`;
+  const model = /^[\w./:-]{1,150}$/.test(code.model || "") ? code.model : "unknown";
+  const caption = `**Code model:** \`${model}\`\n\`${filename}\` — ${code.language}, ${code.lines} line${code.lines === 1 ? "" : "s"}`;
   const payload = () => ({
     content: caption,
     files: [{ attachment: code.buffer, name: filename }],
@@ -194,17 +196,15 @@ async function deliverCode(message, code, shouldDM) {
   if (shouldDM) {
     try {
       await message.author.send(payload());
-      if (message.guild) {
-        await message.channel.send({ content: "📬 sent the code to your dms", allowedMentions: NO_MENTIONS }).catch(() => {});
-      }
-      return;
     } catch (error) {
       log(`!code DM delivery failed — ${error.message}`, "debug");
-      await message.channel.send({ ...payload(), content: `${caption}\n(dms are closed, so here it is instead)` }).catch(() => {});
+      await toolReply(message, { ...payload(), content: `${caption}\n(dms are closed, so here it is instead)` }, { ping: true });
       return;
     }
+    if (message.guild) await toolReply(message, { content: "📬 sent the code to your dms" }, { ping: true }).catch(() => {});
+    return;
   }
-  await message.channel.send(payload()).catch(() => {});
+  await toolReply(message, payload(), { ping: true });
 }
 
 /**
@@ -229,18 +229,15 @@ export async function handleCodeCommand(message) {
   }
   active.add(userId);
 
-  let status = null;
   try {
-    status = await send({ content: "💻 writing the code, one sec" });
+    await reactForTool(message, "code");
     const code = await generateCode(prompt, language);
     await deliverCode(message, code, shouldDM);
-    if (status) status.delete().catch(() => {});
     log(`!code delivered code.${code.extension} (${code.lines} lines) for ${message.author.username}${shouldDM ? " via dm" : ""}`, "debug");
   } catch (error) {
     log(`!code failed — ${error.message}`, "warn");
     const note = "couldn't generate the code — try again in a bit";
-    if (status) await status.edit(note).catch(() => {});
-    else await send({ content: note });
+    await toolReply(message, { content: note }).catch(() => {});
   } finally {
     active.delete(userId);
   }

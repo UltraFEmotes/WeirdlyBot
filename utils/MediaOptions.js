@@ -86,6 +86,8 @@ export function mediaModelLabel(video, model) {
   return `**${video ? "Video" : "Image"} model:** \`${id}\``;
 }
 
+export const MAX_WEB_REFERENCES = 4;
+
 export function parseMediaCommand(input, video) {
   const options = video ? { resolution: "720p" } : {};
   const seen = new Set();
@@ -93,7 +95,7 @@ export function parseMediaCommand(input, video) {
     key = key.toLowerCase();
     if (/^["']/.test(raw) && raw.at(-1) === raw[0] && raw.length > 1) raw = raw.slice(1, -1);
     const value = raw.toLowerCase();
-    if (seen.has(key)) throw new Error(`--${key} can only be used once.`);
+    if (seen.has(key) && key !== "ref") throw new Error(`--${key} can only be used once.`);
     seen.add(key);
 
     if (key === "model") {
@@ -101,7 +103,9 @@ export function parseMediaCommand(input, video) {
       if (!options.model) throw new Error(`Available models: ${(video ? VIDEO_MODELS : IMAGE_MODELS).join(", ")}.`);
     } else if (key === "ref") {
       if (!raw.trim() || raw.length > 150 || /^["']/.test(raw)) throw new Error('Use --ref "image search terms" (1–150 characters).');
-      options.webReference = raw.trim();
+      options.webReferences ??= [];
+      if (options.webReferences.length >= MAX_WEB_REFERENCES) throw new Error(`Use at most ${MAX_WEB_REFERENCES} --ref options.`);
+      options.webReferences.push(raw.trim());
     } else if (key === "size") {
       if (!/^[1-9]\d?:[1-9]\d?$/.test(value)) throw new Error("Use an aspect ratio for --size, e.g. 16:9.");
       options[video ? "aspect" : "size"] = value;

@@ -69,29 +69,27 @@ async function uploadHostedFile(media, name) {
   throw new Error(errors.join("; "));
 }
 
-export async function deliverMedia({ media, name, video, sendFile, sendLink = sendFile, editFile }) {
-  const label = [mediaModelLabel(video, media.model), media.referenceCaption].filter(Boolean).join("\n");
+export async function deliverMedia({ media, name, video, sendFile, sendLink = sendFile, editFile, caption }) {
+  const label = [mediaModelLabel(video, media.model), media.referenceCaption, caption].filter(Boolean).join("\n");
   const limit = (video ? 25 : 8) * 1024 * 1024;
   const payload = () => ({
-    content: label,
+    content: label.slice(0, 1950),
     files: [{ attachment: media.buffer, name, description: (media.prompt || "").slice(0, 100) }],
     allowedMentions: NO_MENTIONS,
   });
   let discordError;
   try {
     if (media.buffer.length > limit) throw new Error("File exceeds the Discord upload limit.");
-    // editing an existing message (the status) into the delivery keeps
-    // slowmode channels to a single send; a failed edit falls back to a send
     if (editFile) {
       try {
-        await editFile(payload());
-        return { edited: true };
+        const message = await editFile(payload());
+        return { edited: true, message };
       } catch (error) {
         discordError = error;
       }
     }
-    await sendFile(payload());
-    return { edited: false };
+    const message = await sendFile(payload());
+    return { edited: false, message };
   } catch (error) {
     discordError = error;
   }
@@ -101,8 +99,16 @@ export async function deliverMedia({ media, name, video, sendFile, sendLink = se
   }
   try {
     const { link, temporary } = await uploadHostedFile(media, name);
-    const caption = temporary ? "Temporary download (expires in 1 hour)" : "Download on Catbox";
-    await sendLink({ content: `${label}\n${caption}: <${link}>`, allowedMentions: NO_MENTIONS });
+    const footer = `\n${temporary ? "Temporary download (expires in 1 hour)" : "Download on Catbox"}: <${link}>`;
+    const payload = { content: `${label.slice(0, 1950 - footer.length)}${footer}`, allowedMentions: NO_MENTIONS };
+    if (editFile) {
+      try {
+        const message = await editFile(payload);
+        return { edited: true, message };
+      } catch { /* fall back to a new reply */ }
+    }
+    const message = await sendLink(payload);
+    return { edited: false, message };
   } catch (error) {
     throw new MediaDeliveryError(`Media delivery failed — Discord: ${discordError.message}; fallback: ${error.message}`);
   }
