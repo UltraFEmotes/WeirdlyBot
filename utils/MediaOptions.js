@@ -1,5 +1,5 @@
 export const FLAMA_IMAGE_MODELS = [
-  "nano-banana", "nano-banana-2", "nano-banana-2-lite", "nano-banana-2.1", "nano-banana-pro",
+  "qwen-image-3", "nano-banana", "nano-banana-2", "nano-banana-2-lite", "nano-banana-2.1", "nano-banana-pro",
 ];
 
 export const FLAMA_VIDEO_MODELS = [

@@ -23,6 +23,7 @@ import gradient from "gradient-string";
 
 import readyEvent from "./events/ready.js";
 import messageCreateEvent, { onChatTyping } from "./events/messageCreate.js";
+import { onMessageDelete, onMessageUpdate } from "./utils/EditAwareness.js";
 import AIManager from "./utils/AIManager.js";
 import { createDiscordClient, discordMode, discordToken } from "./utils/DiscordClient.js";
 import { onVoiceStateUpdate, stopVoiceChat } from "./utils/VoiceChat.js";
@@ -155,6 +156,8 @@ async function initialize() {
     client.once(discord.readyEventName, () => readyEvent.execute(client));
     client.on(messageCreateEvent.name, (...args) => messageCreateEvent.execute(client, ...args));
     client.on("typingStart", (typing) => onChatTyping(client, typing));
+    client.on("messageUpdate", (before, after) => void onMessageUpdate(client, before, after).catch(() => {}));
+    client.on("messageDelete", (message) => void onMessageDelete(client, message).catch(() => {}));
     client.on("voiceStateUpdate", onVoiceStateUpdate);
 
     setupProcessGuards();

@@ -20,7 +20,7 @@ export async function handleMediaCommand(message) {
   const send = (content) => pacedSend(message.channel, () => message.channel.send({ content, allowedMentions: NO_MENTIONS }));
   if (command === "modellist") {
     const ai = loadConfig().ai;
-    const imageDefault = ai?.[ai.image_provider || "openai"]?.image_model || "nano-banana-2-lite";
+    const imageDefault = ai?.[ai.image_provider || "openai"]?.image_model || "qwen-image-3";
     const videoDefault = ai?.[ai.video_provider || "openai"]?.video_model || "gemini-omni-1.2-flash";
     const format = (models, defaultModel) => [...new Set(defaultModel ? [...models, defaultModel] : models)]
       .map((model) => `• \`${model}\`${model === defaultModel ? " **(default)**" : ""}`)

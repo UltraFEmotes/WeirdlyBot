@@ -1,12 +1,9 @@
 import { isImageAttachment } from "./ChatImages.js";
+import { isVideoAttachment } from "./ChatVideo.js";
 
 const DELIVERY_LABEL = /^\*\*(Image|Video) model:\*\* `([\w./:-]{1,150})`(?:\r?\n|$)/;
 const HOSTED_DELIVERY = /^(?:Download on Catbox|Temporary download \(expires in 1 hour\)): <https:\/\/(?:(?:files|litter)\.catbox\.moe\/[\w.-]+|tmpfiles\.org\/\d+\/[^<>\s]+)>$/m;
 const LAST_MEDIA_MS = 60 * 60_000;
-
-function isVideoAttachment(file) {
-  return /^video\//i.test(file.contentType || "") || /\.(?:mp4|mov|m4v|webm|avi|mkv|mpeg|mpg)$/i.test(file.name || "");
-}
 
 function hasMedia(message) {
   return [...(message.attachments?.values() || [])].some(file => isImageAttachment(file) || isVideoAttachment(file));

@@ -1,5 +1,7 @@
 import axios from "axios";
 import { isImageAttachment } from "./ChatImages.js";
+import { isVideoAttachment } from "./ChatVideo.js";
+import { isAudioAttachment } from "./VoiceMessages.js";
 
 const MAX_BYTES = 128 * 1024;
 const MAX_CHARS = 4_000;
@@ -8,7 +10,7 @@ const CDN_HOSTS = new Set(["cdn.discordapp.com", "media.discordapp.net"]);
 const TEXT_EXTENSION = /\.(?:txt|log|md|markdown|rst|csv|tsv|jsonl?|ndjson|ya?ml|toml|xml|ini|cfg|conf|sql|diff|patch|[cm]?[jt]sx?|py|rb|php|java|kt|scala|go|rs|swift|dart|lua[u]?|[ch]|cc|cpp|hpp|cs|sh|bash|zsh|ps1|bat|html?|css|scss|vue|svelte|ipynb)$/i;
 
 export function hasChatFile(message) {
-  return [...(message.attachments?.values() || [])].some(file => !isImageAttachment(file));
+  return [...(message.attachments?.values() || [])].some(file => !isImageAttachment(file) && !isVideoAttachment(file) && !isAudioAttachment(file));
 }
 
 function canRead(file) {
@@ -49,7 +51,7 @@ export async function collectChatFiles(messages, references = []) {
   for (const [source, group] of [["current message", [...messages].reverse()], ["replied-to message", references]]) {
     for (const message of group) {
       for (const file of message.attachments?.values() || []) {
-        if (isImageAttachment(file) || seen.has(file.url)) continue;
+        if (isImageAttachment(file) || isVideoAttachment(file) || isAudioAttachment(file) || seen.has(file.url)) continue;
         seen.add(file.url);
         if (candidates.length < MAX_FILES) candidates.push(readFile(file, source));
         else omitted = true;

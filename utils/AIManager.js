@@ -17,7 +17,7 @@ import axios from "axios";
 import { videoApiError } from "./VideoErrors.js";
 import { generateH3LabMedia } from "./H3Lab.js";
 import { h3LabModelId } from "./MediaOptions.js";
-const DEFAULT_IMAGE_MODEL = "nano-banana-2-lite";
+const DEFAULT_IMAGE_MODEL = "qwen-image-3";
 const DEFAULT_VIDEO_MODEL = "gemini-omni-1.2-flash";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

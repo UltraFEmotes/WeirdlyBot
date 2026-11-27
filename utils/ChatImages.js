@@ -11,22 +11,60 @@ export function isImageAttachment(attachment) {
     /\.(?:png|jpe?g|webp|gif|avif|tiff|bmp)$/i.test(attachment.name || "");
 }
 
+// Only Discord-hosted media: uploads, Discord's proxy for embedded image links
+// (imgur, tenor, direct .png links...), sticker images and profile pictures.
+export function discordMediaUrl(value) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.port || url.username || url.password) return null;
+    if (DISCORD_CDN.has(url.hostname) &&
+        /^\/(?:attachments|stickers|avatars|embed\/avatars|guilds\/\d+\/users\/\d+\/avatars)\//.test(url.pathname)) return url;
+    if (/^images-ext-\d+\.discordapp\.net$/.test(url.hostname) && url.pathname.startsWith("/external/")) return url;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every image a message carries: attachments, image/gif link embeds and
+ * non-animated stickers, in that order.
+ * @returns {{ url: string, name: string, size?: number, width?: number, height?: number, kind: string }[]}
+ */
+export function imageSources(message) {
+  const sources = [];
+  for (const attachment of message.attachments?.values() || []) {
+    if (!isImageAttachment(attachment) || !discordMediaUrl(attachment.url)) continue;
+    sources.push({ url: attachment.url, name: attachment.name || "image", size: attachment.size,
+      width: attachment.width, height: attachment.height, kind: "attachment" });
+  }
+  for (const embed of message.embeds || []) {
+    // A pasted image or tenor link becomes an "image"/"gifv" embed; article
+    // previews (youtube, news) are left out so their thumbnails aren't edited.
+    if (!["image", "gifv"].includes(embed.type)) continue;
+    const media = embed.image?.proxyURL ? embed.image : embed.thumbnail;
+    if (!discordMediaUrl(media?.proxyURL)) continue;
+    sources.push({ url: media.proxyURL, name: embed.provider?.name || "linked image",
+      width: media.width, height: media.height, kind: "embed" });
+  }
+  for (const sticker of message.stickers?.values() || []) {
+    if (!["PNG", "APNG", 1, 2].includes(sticker.format)) continue;
+    const url = `https://media.discordapp.net/stickers/${sticker.id}.png?size=320`;
+    if (/^\d+$/.test(sticker.id || "")) sources.push({ url, name: `sticker ${sticker.name || ""}`.trim(), kind: "sticker" });
+  }
+  return sources;
+}
+
 export function hasChatImage(message) {
-  return [...(message.attachments?.values() || [])].some(isImageAttachment);
+  return imageSources(message).length > 0;
 }
 
 export function getDiscordImageUrls(messages) {
   const urls = new Set();
   for (const message of messages) {
-    for (const attachment of message.attachments?.values() || []) {
-      if (!isImageAttachment(attachment)) continue;
-      try {
-        const url = new URL(attachment.url);
-        if (url.protocol !== "https:" || !DISCORD_CDN.has(url.hostname) || url.port || url.username ||
-            url.password || !url.pathname.startsWith("/attachments/")) continue;
-        urls.add(url.href);
-        if (urls.size >= MAX_IMAGES) return [...urls];
-      } catch { /* skip malformed attachment URL */ }
+    for (const source of imageSources(message)) {
+      urls.add(discordMediaUrl(source.url).href);
+      if (urls.size >= MAX_IMAGES) return [...urls];
     }
   }
   return [...urls];
@@ -37,13 +75,12 @@ export function wantsImageText(text) {
 }
 
 export function refersToImage(text) {
-  return wantsImageText(text) || /\b(?:image|picture|photo|screenshot|pic|attachment)\b/i.test(text);
+  return wantsImageText(text) || /\b(?:image|picture|photo|screenshot|pic|attachment|sticker|gif|meme)\b/i.test(text);
 }
 
-async function readDiscordImage(attachment) {
-  const url = new URL(attachment.url);
-  if (url.protocol !== "https:" || !DISCORD_CDN.has(url.hostname) || url.username || url.password ||
-      url.port || !url.pathname.startsWith("/attachments/") || attachment.size > MAX_DOWNLOAD_BYTES) return null;
+export async function readDiscordImage(source) {
+  const url = discordMediaUrl(source.url);
+  if (!url || source.size > MAX_DOWNLOAD_BYTES) return null;
 
   const { data } = await axios.get(url.href, {
     responseType: "arraybuffer", timeout: 10_000, maxContentLength: MAX_DOWNLOAD_BYTES, maxRedirects: 0,
@@ -63,10 +100,10 @@ export async function collectChatImages(messages) {
   const candidates = [];
   const seen = new Set();
   for (const message of messages) {
-    for (const attachment of message.attachments?.values() || []) {
-      if (!isImageAttachment(attachment) || seen.has(attachment.url)) continue;
-      seen.add(attachment.url);
-      candidates.push(attachment);
+    for (const source of imageSources(message)) {
+      if (seen.has(source.url)) continue;
+      seen.add(source.url);
+      candidates.push(source);
       if (candidates.length >= MAX_IMAGES) break;
     }
     if (candidates.length >= MAX_IMAGES) break;

@@ -48,7 +48,7 @@ ai:
     enabled: true
     api_key_env: "FLAMA_API_KEY"
     base_url: "https://ai.tryflama.com/v1"
-    image_model: "nano-banana-2-lite"
+    image_model: "qwen-image-3"
 ```
 
 ## Writing Good Prompts
