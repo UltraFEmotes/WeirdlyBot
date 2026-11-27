@@ -14,11 +14,11 @@ export function toolCaption(segments) {
 
 export async function toolReply(target, payload, { ping = false, replyTo = target } = {}) {
   const user = target.author.id;
-  const mention = ping && target.guild ? `<@${user}> ` : "";
+  const mention = ping && (target.guild || !payload.content) ? `<@${user}> ` : "";
   const message = {
     ...payload,
     content: payload.content?.slice(0, 2000 - mention.length),
-    allowedMentions: ping && target.guild ? { ...NO_TOOL_MENTIONS, users: [user] } : NO_TOOL_MENTIONS,
+    allowedMentions: mention ? { ...NO_TOOL_MENTIONS, users: [user] } : NO_TOOL_MENTIONS,
   };
   try {
     // Keep media model labels on the first line so provenance can read them.
@@ -29,6 +29,6 @@ export async function toolReply(target, payload, { ping = false, replyTo = targe
   }
 }
 
-export async function notifyToolResult(target, result) {
-  await toolReply(target, { content: "done — it’s ready above." }, { ping: true, replyTo: result }).catch(() => {});
+export async function notifyToolResult(target, result = target) {
+  await toolReply(target, { content: "" }, { ping: true, replyTo: result }).catch(() => {});
 }

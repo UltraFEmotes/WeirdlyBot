@@ -7,11 +7,12 @@ Official bot mode is recommended. Selfbots violate Discord's Terms of Service an
 ## What it does
 
 - Joins chats in whitelisted servers when messages are **aimed at it** (@ping, reply) **or continue its topic** — a fast relevance judge reads recent context, and the bot goes quiet the moment people drift away. **DMs** always get replies
+- Sometimes adds a short, unprompted comment in a whitelisted channel where it recently participated and the same topic is still active. It waits for a pause, never pings or runs tools, and can comment at most once every four minutes per channel. Set `behavior.on_topic_comment_chance: 0` to disable it (default `0.08` per eligible opportunity).
 - Shows a **typing indicator** while thinking, with random reply delays
 - Makes occasional **typos** and edits the message a few seconds later to correct them
 - Can send **gifs**, **react** to messages, **generate images** (Nano Banana 2 Lite) and **generate videos** (Gemini Omni 1.2 Flash) — the AI invokes these itself
 - If someone **attaches an image**, the AI can **edit it** or **animate it into a video** — attachments are **always converted** before use (sharp: decoded, downscaled to ≤1536px, re-encoded as compact JPEG; fallback to Discord's media proxy for conversion), since the video model rejects large references with a generic 400
-- Tool progress uses reactions instead of filler messages: 🌐 web search, 🎬 video, 🎨 image, 💻 code, 🎞️ GIF lookup, and 🔎 OCR. You can keep chatting while generation runs. If the bot sent a real caption, it edits that message into the result, then replies to it and mentions the requester. Without a caption, it sends one final tagged result directly.
+- Tool progress uses reactions instead of filler messages: 🌐 web search, 🎬 video, 🎨 image, 💻 code, 🎞️ GIF lookup, and 🔎 OCR. You can keep chatting while generation runs. If the bot sent a caption for an image or video, it edits that message into the result and replies with just a mention. Without a caption, it sends one final result. Web search doesn’t ping.
 - Media requests retry on HTTP 429/502/503 and retry HTTP 400 once after at least a minute
 - Respects **slowmode**: the bot waits for the channel cooldown on new messages, including delivery notifications. Reactions and edits don't require another send slot.
 - If the AI narrates generating media but forgets to invoke the tool, a **fallback intent check** catches the request and generates it anyway (prompt + duration derived from the conversation)
@@ -19,7 +20,7 @@ Official bot mode is recommended. Selfbots violate Discord's Terms of Service an
 - Has **shared memory per server**: what anyone says in one channel (and the bot's replies, last 24h — `behavior.global_memory_hours`) is remembered across that server's channels, so a topic brought up anywhere in the server is known everywhere in it. Each DM conversation keeps its own separate memory, and nothing ever crosses servers or into DMs
 - **Catches up before replying**: when it joins a conversation it wasn't part of (or was quiet for), it reads back the channel messages sent since its own last message — so "isn't that right?" makes sense even when it didn't see what came before
 - **Knows what you replied to**: replying to one of its messages (no ping needed) or to someone else's message passes the quoted text into the prompt — "do you agree?" works even when the quoted message is hours old
-- **Chooses how to reply**: it can post a standalone message, ping the requester, or reply to a quoted or nearby message. For a two-message request like “hi @Alex” and then “AI say hi to them,” it greets Alex directly, replying to their recent message if available.
+- **Chooses how to reply**: casual chat defaults to a standalone message. The bot can still link a reply when it helps, or ping the requester when asked. Reply to someone and say “AI, answer them” to send the answer directly to their original message. For a two-message request like “hi @Alex” and then “AI say hi to them,” it greets Alex directly, replying to their recent message if available.
 
 ## Setup
 

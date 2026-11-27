@@ -15,7 +15,7 @@
 
 import { log, loadConfig } from "./functions.js";
 import AIManager from "./AIManager.js";
-import { reactForTool, toolReply } from "./ToolFeedback.js";
+import { notifyToolResult, reactForTool, toolReply } from "./ToolFeedback.js";
 
 const NO_MENTIONS = { parse: [], repliedUser: false };
 // code generation can easily outlive the provider client's default 30s timeout
@@ -201,7 +201,7 @@ async function deliverCode(message, code, shouldDM) {
       await toolReply(message, { ...payload(), content: `${caption}\n(dms are closed, so here it is instead)` }, { ping: true });
       return;
     }
-    if (message.guild) await toolReply(message, { content: "📬 sent the code to your dms" }, { ping: true }).catch(() => {});
+    if (message.guild) await notifyToolResult(message);
     return;
   }
   await toolReply(message, payload(), { ping: true });

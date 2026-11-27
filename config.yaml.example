@@ -42,6 +42,7 @@ behavior:
   max_message_chars: 1200
   media_host_fallback: true  # Public Catbox download link if Discord cannot upload the file
   engagement_timeout_minutes: 10
+  on_topic_comment_chance: 0.08  # Occasional same-topic comments in active server chats; 0 disables
 
   # how long topics stay in the bot's shared memory (scoped per server, and
   # per dm conversation — nothing crosses servers or into dms). 0 disables it.
