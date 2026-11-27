@@ -22,7 +22,7 @@ import figlet from "figlet";
 import gradient from "gradient-string";
 
 import readyEvent from "./events/ready.js";
-import messageCreateEvent from "./events/messageCreate.js";
+import messageCreateEvent, { onChatTyping } from "./events/messageCreate.js";
 import AIManager from "./utils/AIManager.js";
 import { createDiscordClient, discordMode, discordToken } from "./utils/DiscordClient.js";
 import { onVoiceStateUpdate, stopVoiceChat } from "./utils/VoiceChat.js";
@@ -154,6 +154,7 @@ async function initialize() {
 
     client.once(discord.readyEventName, () => readyEvent.execute(client));
     client.on(messageCreateEvent.name, (...args) => messageCreateEvent.execute(client, ...args));
+    client.on("typingStart", (typing) => onChatTyping(client, typing));
     client.on("voiceStateUpdate", onVoiceStateUpdate);
 
     setupProcessGuards();

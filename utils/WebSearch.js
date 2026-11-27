@@ -38,10 +38,10 @@ function formatResults(items) {
   }).slice(0, 4);
 }
 
-function runKeylessSearch(query) {
+function runKeylessSearch(query, mode) {
   return new Promise((resolve, reject) => {
-    const child = execFile("uv", ["run", "--no-project", "--script", SEARCH_SCRIPT], {
-      timeout: 25_000, maxBuffer: 64_000,
+    const child = execFile("uv", ["run", "--no-project", "--script", SEARCH_SCRIPT, ...(mode ? [mode] : [])], {
+      timeout: mode === "images" ? 10_000 : 25_000, maxBuffer: 64_000,
       env: Object.fromEntries(Object.entries(process.env).filter(([key]) => RUNNER_ENV.has(key.toUpperCase()))),
     }, (error, stdout) => {
       if (error) {
@@ -58,6 +58,16 @@ function runKeylessSearch(query) {
     child.stdin.on("error", () => {}); // The search runner may exit before reading stdin.
     child.stdin.end(query);
   });
+}
+
+export async function searchImages(query) {
+  if (activeSearches >= MAX_CONCURRENT_SEARCHES) throw new Error("Web search is busy.");
+  activeSearches += 1;
+  try {
+    return await runKeylessSearch(query, "images");
+  } finally {
+    activeSearches -= 1;
+  }
 }
 
 export async function searchWeb(query) {

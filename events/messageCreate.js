@@ -23,7 +23,7 @@
  * Replies behave like a real person:
  *   - batches rapid-fire messages for a couple of seconds before replying
  *   - typing indicator for as long as it "thinks"
- *   - random delay before typing, like a person noticing the message
+ *   - waits while the sender is typing before starting a reply
  *   - occasional typos that get corrected by editing the message later
  *   - occasionally splits longer replies into two messages
  *
@@ -47,6 +47,7 @@ import { handleVoiceCommand } from "../utils/VoiceChat.js";
 import { chatMediaModels, hasH3LabKey, h3LabModelId, requestedMediaModel, selectMediaModel } from "../utils/MediaOptions.js";
 import { deliverMedia, MediaDeliveryError } from "../utils/MediaDelivery.js";
 import { searchWeb } from "../utils/WebSearch.js";
+import { webImageReference } from "../utils/WebImageReference.js";
 import { videoFailureMessage } from "../utils/VideoErrors.js";
 import { collectChatImages, getDiscordImageUrls, hasChatImage, imageMessageContent, isImageAttachment, refersToImage, wantsImageText } from "../utils/ChatImages.js";
 import { collectChatFiles, hasChatFile } from "../utils/ChatFiles.js";
@@ -68,7 +69,9 @@ import {
 } from "../utils/WhitelistStore.js";
 
 /** Per user+channel reply pipeline state */
-const batches = new Map(); // "userId:channelId" -> { messages: [], timer, busy }
+const batches = new Map(); // one pending burst per user and channel
+const TYPING_INDICATOR_MS = 10_000;
+const MAX_BURST_WAIT_MS = 20_000;
 const waitingForStatus = new Map();
 
 const ADMIN_COMMAND_PREFIX = "!";
@@ -113,6 +116,9 @@ export default {
     // slowmode slots too, so note them before the pipeline ignores them
     if (message.author.id === client.user.id) {
       noteSend(message.channel, message.createdTimestamp);
+      const destination = (message.guild ? channelLabel(message) : "DM")
+        .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ");
+      log(`${client.user.bot ? "Bot" : "Connected account"} sent a message → ${destination}`, "info");
       return;
     }
     if (message.author.bot || message.webhookId) return;
@@ -176,28 +182,46 @@ export default {
       return;
     }
 
-    // ── engagement gate: only messages aimed at the bot / its conversation ──
-    const imageTextRequest = wantsImageText(statusInput) && (hasChatImage(message) || message.reference?.messageId);
-    const fileRequest = hasChatFile(message) && /\b(?:read|review|summarize|explain|inspect|analyze|check|look at)\b/i.test(statusInput);
-    if (!imageTextRequest && !fileRequest && !(await shouldEngage(client, message, cfg))) return;
-
-    // ── queue the message into the per user+channel pipeline ────────────────
-    const key = `${message.author.id}:${message.channel.id}`;
+    // Wait for the whole burst before judging whether it was aimed at us.
+    const key = statusKey;
     let entry = batches.get(key);
     if (!entry) {
-      entry = { messages: [], timer: null, busy: false };
+      entry = { messages: [], timer: null, busy: false, approved: false, typingUntil: 0 };
       batches.set(key, entry);
     }
-
+    const now = Date.now();
+    if (!entry.messages.length) {
+      entry.startedAt = now;
+      entry.replyDelay = rand(behavior.min_reply_delay_ms ?? 700, behavior.max_reply_delay_ms ?? 2500);
+    }
     entry.messages.push(message);
-
-    if (entry.busy) return; // queued — will be handled when the current reply finishes
-    if (entry.timer) clearTimeout(entry.timer);
-
-    // batch rapid-fire messages so one burst gets one reply
-    entry.timer = setTimeout(() => processBatch(client, key), behavior.batch_window_ms ?? 2500);
+    entry.lastMessageAt = now;
+    entry.typingUntil = 0;
+    scheduleBatch(client, key, entry, behavior);
   },
 };
+
+function batchDeadline(entry, behavior) {
+  const quietUntil = entry.lastMessageAt + (behavior.batch_window_ms ?? 2500) + entry.replyDelay;
+  return Math.min(entry.startedAt + MAX_BURST_WAIT_MS, Math.max(quietUntil, entry.typingUntil));
+}
+
+function scheduleBatch(client, key, entry, behavior) {
+  if (entry.busy) return;
+  clearTimeout(entry.timer);
+  entry.timer = setTimeout(() => processBatch(client, key), Math.max(0, batchDeadline(entry, behavior) - Date.now()));
+}
+
+export function onChatTyping(client, typing) {
+  const key = `${typing.user?.id}:${typing.channel?.id}`;
+  const entry = batches.get(key);
+  if (!entry?.messages.length) return;
+  const timestamp = typing.startedTimestamp ?? Date.now();
+  // Discord sends whole-second timestamps for typing events.
+  if (timestamp + 999 < (entry.messages.at(-1).createdTimestamp ?? entry.lastMessageAt)) return;
+  entry.typingUntil = Math.max(entry.typingUntil, timestamp + TYPING_INDICATOR_MS);
+  scheduleBatch(client, key, entry, loadConfig().behavior || {});
+}
 
 // ─── Admin commands ──────────────────────────────────────────────────────────
 
@@ -286,7 +310,8 @@ function cmdListServers(client, message) {
  * focused on it, and goes quiet as soon as they drift away.
  * @returns {Promise<boolean>}
  */
-async function shouldEngage(client, message, cfg) {
+async function shouldEngage(client, messages, cfg) {
+  const message = messages.at(-1);
   // DMs always get a reply
   if (!message.guild) return true;
 
@@ -294,7 +319,8 @@ async function shouldEngage(client, message, cfg) {
   const channelId = message.channel.id;
 
   // @pinged or replying to one of our messages — always engage
-  if (message.mentions.users.has(client.user.id) || (await repliesToBot(client, message))) {
+  if (messages.some(m => m.mentions.users.has(client.user.id)) ||
+      (await Promise.all(messages.filter(m => m.reference?.messageId).map(m => repliesToBot(client, m)))).some(Boolean)) {
     engage(userId, channelId);
     return true;
   }
@@ -302,7 +328,7 @@ async function shouldEngage(client, message, cfg) {
   // otherwise: is this message directed at the bot / continuing its conversation?
   try {
     const engagedNow = isEngaged(userId, channelId);
-    const verdict = await classifyEngagement(client, message, cfg, engagedNow);
+    const verdict = await classifyEngagement(client, message, cfg, engagedNow, messages);
 
     if (verdict === "yes") {
       if (!engagedNow) {
@@ -338,7 +364,7 @@ async function shouldEngage(client, message, cfg) {
  * Returns "yes" (reply + engage), "no" (clearly drifted → disengage), or
  * "maybe" (no reply, but keep the current engagement state).
  */
-async function classifyEngagement(client, message, cfg, engagedNow) {
+async function classifyEngagement(client, message, cfg, engagedNow, burst) {
   const persona = cfg.persona || {};
   const botName = persona.name || client.user.username;
   const senderName =
@@ -381,9 +407,10 @@ err on the side of NO — a quiet bot is better than a bot that replies to every
 recent channel messages (oldest → newest):
 ${buildRecentContext(client, message)}
 
-message to judge (from ${senderName}): "${(message.content || "(no text)").slice(0, 500)}"
+latest message burst to judge as ONE turn (all from ${senderName}, oldest first):
+${burst.slice(-12).map(m => (m.content || "(no text)").slice(0, 500)).join("\n")}
 
-is this message directed at the bot or continuing the bot's conversation? one word:`,
+if an earlier line addresses the bot by name, the following lines from that same person can finish the question or thought. is this burst directed at the bot or continuing the bot's conversation? one word:`,
     },
   ];
 
@@ -464,6 +491,7 @@ TOOL: <image | image_edit | video | video_edit | none>
 PROMPT: <a detailed self-contained english generation prompt — subject, action, setting, style; for video also camera movement — or just "-" if TOOL is none>
 DURATION: <a number of seconds between 1 and 15 if TOOL is video or video_edit, otherwise ->
 MODEL: <an exact model ID for the chosen media type, or - to use the default>
+REFERENCE: <short public image search terms for a new image or video when a visual reference would materially help, otherwise ->
 
 Available image models: ${chatMediaModels(false).join(", ")}. Default: nano-banana-2-lite.
 Available video models: ${chatMediaModels(true).join(", ")}. Default: gemini-omni-1.2-flash.
@@ -505,7 +533,7 @@ is anyone asking for media generation? answer in the exact format:`,
     if (!toolMatch || toolMatch[1].toLowerCase() === "none") return null;
 
     const tool = toolMatch[1].toLowerCase();
-    const promptMatch = (text || "").match(/PROMPT:\s*([\s\S]*?)(?:\n(?:DURATION|MODEL):|$)/i);
+    const promptMatch = (text || "").match(/PROMPT:\s*([\s\S]*?)(?:\n(?:DURATION|MODEL|REFERENCE):|$)/i);
     const prompt = (promptMatch?.[1] || "").trim().replace(/^[-–]\s*/, "");
     if (!prompt) return null;
     if ((tool === "image_edit" || tool === "video_edit") && !hasAttachment) return null;
@@ -514,7 +542,10 @@ is anyone asking for media generation? answer in the exact format:`,
     const duration = durMatch ? Math.min(15, Math.max(1, parseInt(durMatch[1], 10))) : null;
 
     const model = selectMediaModel(text.match(/^MODEL:[ \t]*(\S+)/im)?.[1], tool.startsWith("video"));
-    const argument = [prompt.slice(0, 500), ...(duration && tool.startsWith("video") ? [duration] : []), ...(model ? [`model=${model}`] : [])].join(" | ");
+    const reference = (tool === "image" || tool === "video")
+      ? text.match(/^REFERENCE:[ \t]*([^|\r\n]+)/im)?.[1].trim().slice(0, 150) : null;
+    const argument = [prompt.slice(0, 500), ...(duration && tool.startsWith("video") ? [duration] : []),
+      ...(model ? [`model=${model}`] : []), ...(reference && reference !== "-" ? [`ref=${reference}`] : [])].join(" | ");
     return { tool, prompt: argument };
   } catch (error) {
     log(`media intent detection failed — ${error.message}`, "debug");
@@ -531,8 +562,30 @@ async function processBatch(client, key) {
   const cfg = loadConfig();
   const behavior = cfg.behavior || {};
 
-  const msgs = entry.messages.splice(0, entry.messages.length);
   entry.busy = true;
+  const count = entry.messages.length;
+  try {
+    const explicitRequest = entry.messages.some(message => {
+      const text = readStatusInput(client, message);
+      return (wantsImageText(text) && (hasChatImage(message) || message.reference?.messageId)) ||
+        (hasChatFile(message) && /\b(?:read|review|summarize|explain|inspect|analyze|check|look at)\b/i.test(text));
+    });
+    entry.approved ||= explicitRequest || await shouldEngage(client, entry.messages.slice(), cfg);
+  } catch (error) {
+    log(`failed to check chat engagement — ${error.message}`, "warn");
+  }
+  if (count !== entry.messages.length || batchDeadline(entry, behavior) > Date.now()) {
+    entry.busy = false;
+    scheduleBatch(client, key, entry, behavior);
+    return;
+  }
+  if (!entry.approved) {
+    batches.delete(key);
+    return;
+  }
+  const burstStartedAt = entry.startedAt;
+  const msgs = entry.messages.splice(0);
+  entry.approved = false;
 
   const target = msgs[msgs.length - 1]; // reply to the newest message
   const channel = target.channel;
@@ -542,9 +595,6 @@ async function processBatch(client, key) {
   const userVideoModel = requested(true);
 
   try {
-    // humans don't answer instantly — small random pause first
-    await wait(rand(behavior.min_reply_delay_ms ?? 700, behavior.max_reply_delay_ms ?? 2500));
-
     // typing indicator while "thinking" (Discord clears it after ~10s, so loop)
     const typingLoop = setInterval(() => channel.sendTyping().catch(() => {}), 8000);
     channel.sendTyping().catch(() => {});
@@ -613,6 +663,15 @@ async function processBatch(client, key) {
         }
         if (!imagesForChat.length) throw error;
         await sendReplyParts(target, ["i couldn't read that image right now"], { ...behavior, typo_chance: 0, no_mentions: true });
+        return;
+      }
+
+      // If the user finished another line during generation, answer the
+      // expanded burst instead of sending a stale reply to the earlier line.
+      if (entry.messages.length && Date.now() < burstStartedAt + MAX_BURST_WAIT_MS) {
+        entry.messages.unshift(...msgs);
+        entry.startedAt = burstStartedAt;
+        entry.approved = true;
         return;
       }
 
@@ -713,14 +772,15 @@ async function processBatch(client, key) {
 
     // generated images (fresh) — status message stays until the file is sent
     for (const raw of images.slice(0, 1)) {
-      const { prompt, model } = parseMediaPrompt(raw, false, userImageModel);
+      const { prompt, model, referenceQuery } = parseMediaPrompt(raw, false, userImageModel);
       if (!prompt) continue;
       let status = null;
       try {
         status = await pacedSend(channel, () => channel.send("generating the image, one sec 🎨")).catch(() => null);
-        const image = await AIManager.generateImage(prompt, { model });
+        const reference = await webImageReference(referenceQuery, false, model);
+        const image = await AIManager.generateImage(prompt, { model, ...reference.options });
         log(`image generated (${(image.buffer.length / 1024).toFixed(0)} KB), sending...`, "debug");
-        const delivered = await sendMediaFile(channel, image, `image.${image.extension}`, false, status);
+        const delivered = await sendMediaFile(channel, { ...image, referenceCaption: reference.caption }, `image.${image.extension}`, false, status);
         if (status && !delivered?.edited) status.delete().catch(() => {});
       } catch (error) {
         log(`image generation failed — ${error.message}`, "warn");
@@ -758,15 +818,16 @@ async function processBatch(client, key) {
 
     // generated videos — the AI picks the length (1-15s) with `| seconds`
     for (const raw of videos.slice(0, 1)) {
-      const { prompt, duration, model } = parseMediaPrompt(raw, true, userVideoModel);
+      const { prompt, duration, model, referenceQuery } = parseMediaPrompt(raw, true, userVideoModel);
       if (!prompt) continue;
       let status = null;
       try {
         status = await pacedSend(channel, () => channel.send("making the video, might take a minute 🎬")).catch(() => null);
         log(`generating video${duration ? ` (${duration}s)` : ""}: "${prompt.slice(0, 80)}"...`, "debug");
-        const video = await AIManager.generateVideo(prompt, { resolution: "720p", duration, model });
+        const reference = await webImageReference(referenceQuery, true, model);
+        const video = await AIManager.generateVideo(prompt, { resolution: "720p", duration, model, ...reference.options });
         log(`video generated (${(video.buffer.length / 1024 / 1024).toFixed(1)} MB), sending...`, "debug");
-        const delivered = await sendMediaFile(channel, video, "video.mp4", true, status);
+        const delivered = await sendMediaFile(channel, { ...video, referenceCaption: reference.caption }, "video.mp4", true, status);
         if (status && !delivered?.edited) status.delete().catch(() => {});
       } catch (error) {
         log(`video generation failed — ${error.message}`, "warn");
@@ -808,8 +869,8 @@ async function processBatch(client, key) {
       current.busy = false;
       // messages that arrived while we were replying get their own turn
       if (current.messages.length > 0) {
-        current.timer = setTimeout(() => processBatch(client, key), rand(1000, 2500));
-      }
+        scheduleBatch(client, key, current, behavior);
+      } else batches.delete(key);
     }
   }
 }
@@ -843,7 +904,7 @@ async function sendReplyParts(target, segments, behavior) {
 
     let sent = null;
     try {
-      if (i === 0 && target.guild) {
+      if (i === 0) {
         sent = await pacedSend(channel, () => target.reply(payload));
       } else {
         sent = await pacedSend(channel, () => channel.send(payload));
@@ -1230,11 +1291,15 @@ function parseMediaPrompt(raw, video, userModel) {
   const parts = (raw || "").split("|");
   let model;
   let duration;
+  let referenceQuery;
   while (parts.length > 1) {
     const part = parts.at(-1).trim();
     if (/^model\s*=/i.test(part)) {
       const value = selectMediaModel(parts.pop().split("=")[1], video);
       model ??= value;
+    } else if (/^ref\s*=/i.test(part)) {
+      referenceQuery ??= part.replace(/^ref\s*=\s*/i, "").trim().slice(0, 150);
+      parts.pop();
     } else if (video && /^\d{1,2}s?$/i.test(part)) {
       const seconds = parseInt(parts.pop(), 10);
       duration ??= Math.min(15, Math.max(1, seconds));
@@ -1242,7 +1307,7 @@ function parseMediaPrompt(raw, video, userModel) {
       break;
     }
   }
-  return { prompt: parts.join("|").replace(/\|\s*$/, "").trim(), duration, model: userModel || model };
+  return { prompt: parts.join("|").replace(/\|\s*$/, "").trim(), duration, model: userModel || model, referenceQuery };
 }
 
 /**
@@ -1361,6 +1426,7 @@ who you are:
 ${memoryText ? `\n${memoryText}\n` : ""}
 TOOLS — to use one, put the marker on its own line at the END of your reply. markers are removed before your message is sent, so NEVER mention them in your visible text. at most ONE media tool per reply (image or video, never both).
 Choose a model for a media request by adding "| model=MODEL_ID" INSIDE the marker before the closing brackets, e.g. [[image_gen: an ink illustration of a forest | model=flux-2-dev]]. For videos it follows the duration, e.g. [[video: a balloon floating upward | 8 | model=h3-rio]]. Use the requested model if listed; otherwise choose an appropriate one or omit the option to use the default.
+For a NEW image or video, append "| ref=public search terms" INSIDE the same marker when the user asks for a web reference or a specific real-world subject needs visual accuracy (e.g. [[video: a slow pan up the Eiffel Tower at dawn | 5 | ref=Eiffel Tower from Champ de Mars]]). Don't use it for generic scenes or when editing an attachment. Send only a short public subject query, not private details, user messages, or URLs. Omit it if the user doesn't want web search. Don't use the separate search marker to fetch a media reference.
 Image models: ${chatMediaModels(false).join(", ")}. Default: nano-banana-2-lite.
 Video models: ${chatMediaModels(true).join(", ")}. Default: gemini-omni-1.2-flash.
 ${hasH3LabKey() ? "h3-rio supports 5–10 seconds without references. ltx-distilled supports 1–8 seconds and can animate an attached image." : ""}

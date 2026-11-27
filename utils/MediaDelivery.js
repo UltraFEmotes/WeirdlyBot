@@ -70,7 +70,7 @@ async function uploadHostedFile(media, name) {
 }
 
 export async function deliverMedia({ media, name, video, sendFile, sendLink = sendFile, editFile }) {
-  const label = mediaModelLabel(video, media.model);
+  const label = [mediaModelLabel(video, media.model), media.referenceCaption].filter(Boolean).join("\n");
   const limit = (video ? 25 : 8) * 1024 * 1024;
   const payload = () => ({
     content: label,

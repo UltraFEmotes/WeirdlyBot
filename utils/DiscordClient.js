@@ -20,6 +20,7 @@ export async function createDiscordClient(config) {
         intents: [
           GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent,
           GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildVoiceStates,
+          GatewayIntentBits.GuildMessageTyping, GatewayIntentBits.DirectMessageTyping,
         ],
         partials: [Partials.Channel],
       }),

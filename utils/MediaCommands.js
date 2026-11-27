@@ -5,6 +5,7 @@ import { getDiscordImageUrls } from "./ChatImages.js";
 import { videoFailureMessage } from "./VideoErrors.js";
 import { deliverMedia } from "./MediaDelivery.js";
 import { pacedSend } from "./SlowMode.js";
+import { webImageReference } from "./WebImageReference.js";
 
 const activeUsers = new Set();
 const MAX_ACTIVE = 2;
@@ -35,8 +36,8 @@ export async function handleMediaCommand(message) {
   const video = command === "vidgen";
   const kind = video ? "video" : "image";
   const usage = video
-    ? "`!vidgen <prompt> [--size 16:9] [--quality 720p] [--duration 5] [--model <id>]`"
-    : "`!imggen <prompt> [--size 1:1] [--model <id>]`";
+    ? '`!vidgen <prompt> [--size 16:9] [--quality 720p] [--duration 5] [--model <id>] [--ref "search terms"]`'
+    : '`!imggen <prompt> [--size 1:1] [--model <id>] [--ref "search terms"]`';
 
   let request;
   try {
@@ -57,14 +58,16 @@ export async function handleMediaCommand(message) {
   let stage = "generate";
   try {
     status = await send(video ? "🎬 Generating your video…" : "🎨 Generating your image…");
-    const { prompt, options } = request;
+    const { prompt, options: { webReference, ...options } } = request;
     if (h3LabModelId(options.model, video)) options.referenceUrls = getDiscordImageUrls([message]);
+    const reference = await webImageReference(webReference, video, options.model, { required: true });
+    Object.assign(options, reference.options);
     const media = video
       ? await AIManager.generateVideo(prompt, options)
       : await AIManager.generateImage(prompt, options);
     stage = "upload";
     const delivered = await deliverMedia({
-      media,
+      media: { ...media, referenceCaption: reference.caption },
       name: `${kind}.${media.extension}`,
       video,
       sendFile: (payload) => pacedSend(message.channel, () => message.reply(payload)),

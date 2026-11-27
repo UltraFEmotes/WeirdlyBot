@@ -65,6 +65,15 @@ All flags are optional. `--size` is an aspect ratio, `--quality` is video resolu
 
 Use `!modellist` to see the bot's image and video model choices and their defaults.
 
+For a specific real-world subject, the bot can look up a visual reference when you ask it to make a new image or video. To request one explicitly:
+
+```text
+!imggen a watercolor of the Sydney Opera House at sunset --ref "Sydney Opera House harbour view"
+!vidgen a slow pan up the Eiffel Tower at dawn --duration 5 --ref "Eiffel Tower Champ de Mars"
+```
+
+The bot tries DuckDuckGo Images via `uv`, then Wikimedia Commons. It sends one reference image to the Flama generator and links the source in the result. This doesn't change how edits to Discord attachments work. Use public search terms, not private information. If automatic lookup finds nothing usable, the bot generates without a reference and says so; an explicit `--ref` request reports the lookup error instead.
+
 ### Optional h3lab media models
 
 Set `H3LAB_API_KEY` in `.env` and restart to use the additional models listed by `!modellist`. Existing Flama models and defaults are unchanged. For example:
@@ -136,7 +145,6 @@ Use `!code <prompt>` in a whitelisted server or DM and the AI writes complete, w
 
 ## How the human-feel works
 
-- Messages are **batched** for ~2.5s, so a burst of messages gets one reply
-- A random 0.7–2.5s pause happens before typing starts
+- A burst from one person gets **one reply to their last message**. Each new message resets the pause (2.5s of quiet plus a short random delay by default). Discord typing indicators can extend the wait, capped at 20s before the bot starts answering.
 - With ~18% chance a word gets a small typo, then the message is **edited to the correct text** 2.5–9s later
 - Longer replies are sometimes split into two messages sent a second apart, and the AI can **double-text** on its own — splitting a reply into up to 3 separate messages with natural gaps (`[[br]]` markers)

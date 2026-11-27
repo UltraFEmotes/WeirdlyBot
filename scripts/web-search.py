@@ -15,12 +15,22 @@ def main():
     if not query:
         print("[]")
         return
+    images = sys.argv[1:] == ["images"]
     try:
-        results = DDGS(timeout=5).text(query, max_results=5)
+        search = DDGS(timeout=5)
+        results = (search.images(query, backend="duckduckgo", safesearch="on", max_results=6)
+                   if images else search.text(query, max_results=5))
     except DDGSException as error:
         if str(error).strip().lower().rstrip(".") != "no results found":
             raise
         results = []
+    if images:
+        print(json.dumps([
+            {"thumbnail": str(item.get("thumbnail") or "")[:1500],
+             "url": str(item.get("url") or "")[:400]}
+            for item in results
+        ]))
+        return
     print(json.dumps([
         {
             "url": item.get("href", ""),
