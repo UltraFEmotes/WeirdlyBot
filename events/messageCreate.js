@@ -65,7 +65,7 @@ import { forgetPerson, peopleMemoryContext, rememberExchange } from "../utils/Pe
 import { applyCustomEmoji, customEmojiNames, naturalize, naturalizeReply, rememberReply, repetitionHint } from "../utils/Naturalizer.js";
 import { activePeople, channelStyle, lengthHint, timeAndMood } from "../utils/ChannelVibe.js";
 import { hasVoiceMessage, isAudioAttachment, transcribeVoiceMessages, voiceTranscript } from "../utils/VoiceMessages.js";
-import { avatarRoles, avatarSubjects, loadAvatars, mentionsAvatar } from "../utils/Avatars.js";
+import { avatarRoles, avatarSubjects, loadAvatars, mentionsAvatar, resolveAvatarTargets } from "../utils/Avatars.js";
 import { noteAnswered } from "../utils/EditAwareness.js";
 import { recordExchange, globalMemoryContext } from "../utils/GlobalMemory.js";
 import { introduceTypo, shouldSplit, splitMessage, rand, chance } from "../utils/Humanizer.js";
@@ -109,7 +109,7 @@ const ADMIN_COMMAND_PREFIX = "!";
 // Tool marker parsers (lenient with bracket count / case)
 // Tool marker parsers — lenient: 1+ brackets and any casing, because the
 // model doesn't always write exactly [[tool: ...]]
-const TOOL_STRIP      = /\[+\s*(?:react|gif|image_gen|image_edit|video|video_edit|search|status|reply)\s*:[\s\S]*?\]+/gi;
+const TOOL_STRIP      = /\[+\s*(?:react|gif|image_gen|image_edit|video|video_edit|search|status|pfp|reply)\s*:[\s\S]*?\]+/gi;
 const REPLY_DESTINATION = /^[ \t]*\[\[\s*reply\s*:[ \t]*(request|channel|channel-ping|quoted|[1-9]\d?)\s*\]\][ \t]*$/im;
 const REACT_MARKER    = /\[+\s*react\s*:\s*([^\]\n]+?)\s*\]+/gi;
 const GIF_MARKER      = /\[+\s*gif\s*:\s*([^\]\n]+?)\s*\]+/gi;
@@ -118,6 +118,7 @@ const MEDIA_MARKER = /\[+\s*(image_gen|image_edit|video|video_edit)\s*:\s*([\s\S
 const STRAY_MODEL_OPTION = /^[ \t]*\|[ \t]*model[ \t]*=[^\n]*$/gim;
 const SEARCH_MARKER = /\[+\s*search\s*:\s*([^\]\n]+?)\s*\]+/gi;
 const STATUS_MARKER = /\[+\s*status\s*:\s*([^\]\n]+?)\s*\]+/gi;
+const PFP_MARKER = /\[+\s*pfp\s*:\s*([^\]\n]+?)\s*\]+/gi;
 
 // [[br]] splits a reply into multiple separate discord messages (double texting)
 const MESSAGE_BREAK      = /\[+\s*br\s*\]+/gi;
@@ -126,9 +127,9 @@ const MESSAGE_BREAK_SCRUB = /\[+\s*br\b[^\]\n]*\]?/gi;
 // Models sometimes get cut off before closing the marker (e.g. "[[react: 💀")
 // — catch an unterminated marker sitting at the end of the reply so the tool
 // still runs and the raw marker never leaks into the chat.
-const UNTERMINATED_MARKER = /\[+\s*(react|gif|image_gen|image_edit|video|video_edit|search|status)\s*:\s*([^\]\n]*)$/i;
+const UNTERMINATED_MARKER = /\[+\s*(react|gif|image_gen|image_edit|video|video_edit|search|status|pfp)\s*:\s*([^\]\n]*)$/i;
 // Final safety scrub: any tool-like text anywhere in the reply gets removed.
-const TOOL_SCRUB = /\[+\s*(?:react|gif|image_gen|image_edit|video|video_edit|search|status|reply)\s*:[^\]\n]*\]?/gi;
+const TOOL_SCRUB = /\[+\s*(?:react|gif|image_gen|image_edit|video|video_edit|search|status|pfp|reply)\s*:[^\]\n]*\]?/gi;
 const CUSTOM_EMOJI = /<a?:[a-zA-Z0-9_]+:\d+>/;
 
 export default {
@@ -802,6 +803,25 @@ async function processBatch(client, key) {
       }
 
       let parsed = parseTools(generated.text || "");
+      // [[pfp: name]]: the model asked to see someone's profile picture.
+      // Fetch it and let the model answer again, now looking at it.
+      if (parsed.pfps.length && !hasFiles) {
+        const looked = (await loadAvatars(resolveAvatarTargets(parsed.pfps, target, client)))
+          .filter(avatar => !avatars.some(seen => seen.id === avatar.id));
+        const turn = messages.at(-1);
+        const turnText = typeof turn.content === "string" ? turn.content : turn.content.find(part => part.type === "text")?.text || "";
+        messages[messages.length - 1] = { role: "user", content: imageMessageContent(`${turnText}\n\n${looked.length
+          ? `You looked up profile pictures; they're attached after any earlier images (${avatarRoles(looked, imagesForChat.length)}). Answer now, looking at them. Don't use the pfp marker again.`
+          : "You tried to look up a profile picture but couldn't find that person. Say so briefly or answer without it. Don't use the pfp marker again."}`,
+        [...imagesForChat, ...looked.map(avatar => avatar.image)]) };
+        try {
+          generated = await AIManager.chainGenerateWithHistory(messages, chain);
+          parsed = parseTools(generated.text || "");
+          parsed.pfps = [];
+        } catch (error) {
+          log(`pfp lookup reply failed — ${error.message}`, "warn");
+        }
+      }
       if (delegate) {
         if (!hasFiles && parsed.searches[0]) {
           void replyWithWebSearch(target, parsed.searches[0], delegate.content, chain, "", delegate)
@@ -1525,6 +1545,7 @@ function parseTools(text) {
     videoEdits: [],
     searches: [],
     statuses: [],
+    pfps: [],
     replyDestination: text.match(REPLY_DESTINATION)?.[1].toLowerCase(),
   };
 
@@ -1533,6 +1554,7 @@ function parseTools(text) {
   while ((match = GIF_MARKER.exec(text)) !== null) parsed.gifs.push(match[1].trim());
   while ((match = SEARCH_MARKER.exec(text)) !== null) parsed.searches.push(match[1].trim());
   while ((match = STATUS_MARKER.exec(text)) !== null) parsed.statuses.push(match[1].trim());
+  while ((match = PFP_MARKER.exec(text)) !== null) parsed.pfps.push(...match[1].split(/\s*,\s*/).filter(Boolean));
 
   // [[br]] markers split the reply into multiple separate messages
   let clean = (text || "").replace(MEDIA_MARKER, (_, kind, prompt, duration, model) => {
@@ -1577,6 +1599,7 @@ function routeToolValue(name, value, parsed) {
     case "video_edit": parsed.videoEdits.push(value); break;
     case "search": parsed.searches.push(value); break;
     case "status": parsed.statuses.push(value); break;
+    case "pfp": parsed.pfps.push(value); break;
   }
 }
 
@@ -1757,6 +1780,7 @@ CRITICAL: when someone asks you to make/generate/edit/animate a picture, image, 
 - [[br]] — send your reply as MULTIPLE separate discord messages, like double texting: place it between two parts of your reply where one message ends and the next begins. use it sometimes when it feels natural — excitement, telling something in bits, adding a second thought — at most 2 per reply and not every time
 - [[react: emoji]] — react to their last message with ONE unicode emoji (e.g. 😭 💀 😂 🔥). use when a reaction says more than words, max once per reply
 - [[gif: search query]] — send a matching gif. use for reactions/funny/relatable moments where a gif fits better than words. 2-4 word english query, max once per reply
+- [[pfp: name]] — look at someone's profile picture: a name, @name, "me" for the person talking, or "you" for yourself (comma-separate up to 3). use it when seeing it matters ("rate my pfp", "what does sam look like", "who has the better pfp") and it isn't already attached. put ONLY the marker in that reply; you'll get the picture and answer right after. not needed for image/video requests, where the pfp is attached automatically
 - [[search: query]] — look up facts before answering, especially if the user asks you to search or needs current information. Use a short query without private details. The app runs the lookup before you answer. Use only one search, and don't combine it with other tools.
 - [[status: text]] — change your custom Discord status. Recognize casual phrasing (e.g. "put gaming rn on your profile" → [[status: gaming rn]]). Only use it if the user is asking you to change your own status now. Copy the desired text verbatim from their latest messages, not from history. Don't change online/away status, use this for quoted examples, or claim the change succeeded yourself. If no text was provided, ask for it.
 - [[image_gen: prompt]] — generate a brand-new image. ONLY when they clearly ask for an image/picture/art/drawing. write a detailed english prompt, and a short casual caption as your visible text

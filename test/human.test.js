@@ -77,3 +77,20 @@ test("voice messages are recognised as audio", () => {
   assert.equal(isAudioAttachment({ name: "voice-message.ogg", contentType: "audio/ogg" }), true);
   assert.equal(isAudioAttachment({ name: "notes.txt", contentType: "text/plain" }), false);
 });
+
+test("resolveAvatarTargets finds people by name, @name, me and you", async () => {
+  const { resolveAvatarTargets } = await import("../utils/Avatars.js");
+  const user = (id, username, globalName) => ({ id, username, globalName, bot: false,
+    displayAvatarURL: () => `https://cdn.discordapp.com/avatars/${id}/x.png` });
+  const sam = user("1", "sam_99", "Sammy");
+  const me = user("2", "weirdmm", "WeirdMM");
+  const client = { user: { ...user("99", "qwen"), bot: false } };
+  const message = { author: me, member: null, guild: null, mentions: { users: new Map(), members: new Map() },
+    channel: { messages: { cache: new Map([["m1", { author: sam, member: null }]]) } } };
+  const names = (list) => resolveAvatarTargets(list, message, client).map(s => s.name);
+  assert.deepEqual(names(["sammy"]), ["Sammy"]);
+  assert.deepEqual(names(["@sam"]), ["Sammy"]);
+  assert.deepEqual(names(["me"]), ["WeirdMM"]);
+  assert.deepEqual(names(["you"]).length, 1);
+  assert.deepEqual(names(["nobody"]), []);
+});

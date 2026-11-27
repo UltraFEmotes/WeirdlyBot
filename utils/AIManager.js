@@ -339,8 +339,10 @@ class AIManager {
       const payload = { model, prompt: prompt.trim(), n: 1 };
       if (options.size) payload.size = options.size;
       if (options.resolution) payload.resolution = options.resolution;
+      // Flama's image endpoint reads source/reference images from `images`;
+      // it silently ignores `references` (the video endpoint still uses it).
       if (Array.isArray(options.references) && options.references.length > 0) {
-        payload.references = options.references.slice(0, 4);
+        payload.images = options.references.slice(0, 4);
       }
 
       response = await this.#postMedia(`${baseUrl}/images/generations`, payload, apiKey, timeout, "json");

@@ -79,3 +79,35 @@ export async function loadAvatars(subjects) {
 export function avatarRoles(avatars, offset = 0) {
   return avatars.map((avatar, i) => `image ${offset + i + 1} = ${avatar.bot ? "your own" : `@${avatar.name}'s`} profile picture`).join("; ");
 }
+
+/**
+ * Resolve [[pfp: ...]] tool targets — "me", "you", <@id>, @name or a plain
+ * name — to people in this conversation's server (or DM), with avatar URLs.
+ */
+export function resolveAvatarTargets(names, message, client) {
+  const subjects = new Map();
+  const people = new Map();
+  const remember = (user, member) => { if (user && !user.bot) people.set(user.id, { user, member }); };
+  for (const member of message.guild?.members?.cache?.values() || []) remember(member.user, member);
+  for (const recent of message.channel?.messages?.cache?.values() || []) remember(recent.author, recent.member);
+  for (const user of message.mentions?.users?.values() || []) remember(user, message.mentions.members?.get?.(user.id));
+  if (!message.guild && message.channel?.recipient) remember(message.channel.recipient, null);
+
+  for (const raw of names.slice(0, 3)) {
+    const name = String(raw).trim().replace(/^@/, "").toLowerCase();
+    let found = null;
+    if (/^(?:me|my|myself|mine)$/.test(name)) found = { user: message.author, member: message.member };
+    else if (/^(?:you|your|yours|yourself|bot)$/.test(name)) found = { user: client.user, member: message.guild?.members?.me };
+    else {
+      const id = name.match(/^<@!?(\d+)>$/)?.[1] || (/^\d{17,20}$/.test(name) ? name : null);
+      const candidates = [...people.values()];
+      const namesOf = ({ user, member }) => [member?.displayName, user.globalName, user.username].filter(Boolean).map(n => n.toLowerCase());
+      found = id ? people.get(id) || null
+        : candidates.find(p => namesOf(p).includes(name)) || candidates.find(p => namesOf(p).some(n => n.startsWith(name))) || null;
+    }
+    if (!found?.user) continue;
+    const url = avatarUrl(found.user, found.member);
+    if (url) subjects.set(found.user.id, { id: found.user.id, name: displayName(found.user, found.member), url, bot: found.user.id === client.user?.id });
+  }
+  return [...subjects.values()];
+}
