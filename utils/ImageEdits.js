@@ -44,18 +44,42 @@ export function imageEditSources(messages, references, request, { botId, allowRe
   return recent ? [recent] : [];
 }
 
+/**
+ * The images to use from the edit source messages, in the order they appear.
+ * `picks` are 1-based numbers the model chose ("the second one" → [2]); with
+ * none, a message with several images uses only the first, so the generator
+ * never has to guess which one to edit or blend them all together.
+ */
+export function pickEditImages(messages, picks = []) {
+  const seen = new Set();
+  const all = messages.flatMap(imageSources).filter(source => !seen.has(source.url) && seen.add(source.url));
+  if (picks === "all") return all.slice(0, 4);
+  const chosen = [...new Set(picks)].map(n => all[n - 1]).filter(Boolean);
+  return chosen.length ? chosen.slice(0, 4) : all.slice(0, 1);
+}
+
+/** Parse "2", "1,3", "1 and 3" or "all" from a `source=` option. */
+export function parseSourcePicks(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (/^(?:all|every|both)\b/.test(text)) return "all";
+  return [...text.matchAll(/\d{1,2}/g)].map(match => Number(match[0])).filter(n => n >= 1 && n <= 10);
+}
+
 export function imageEditInstructions(prompt, sources) {
   const requestedReframe = RESIZE.test(prompt);
   const framing = requestedReframe ? "Change the framing only as requested." :
     "Keep the original aspect ratio, framing, camera angle, composition, pose, and background.";
+  const several = sources.length > 1;
   const instruction = [
+    several ? `Use the ${sources.length} attached source images together to make one edited image.` :
     "Edit the attached source image in place. It is the image to modify, not just inspiration for a new image.",
     `Requested edit: ${prompt}`,
     "Preserve the original subject’s recognizable identity, face, colors, lighting, and visual style except where the requested edit explicitly changes them.",
     "For an object replacement, change only that object and the minimum surrounding pixels needed to fit it. Do not redraw the rest of the scene.",
     framing,
   ].join("\n");
-  const primary = sources[0] && imageSources(sources[0])[0];
+  // Sources are picked image sources; a whole message is accepted too.
+  const primary = sources[0]?.url ? sources[0] : sources[0] && imageSources(sources[0])[0];
   if (requestedReframe || !(primary?.width > 0 && primary?.height > 0)) return { instruction };
   const ratio = primary.width / primary.height;
   const distance = aspect => {

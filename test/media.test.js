@@ -79,3 +79,15 @@ test("referenceRoles numbers web references after the edit source", () => {
   assert.equal(referenceRoles([]), "");
   assert.match(referenceRoles(["Eiffel Tower"], 1), /image 2 = "Eiffel Tower"/);
 });
+
+test("pickEditImages uses the chosen images from a multi-image message", async () => {
+  const { pickEditImages, parseSourcePicks } = await import("../utils/ImageEdits.js");
+  const file = (name) => [name, { name: `${name}.png`, contentType: "image/png", url: `https://cdn.discordapp.com/attachments/1/2/${name}.png`, width: 800, height: 600 }];
+  const message = { content: "", embeds: [], stickers: new Map(), attachments: new Map([file("a"), file("b"), file("c")]) };
+  const names = (picks) => pickEditImages([message], picks).map(source => source.name);
+  assert.deepEqual(names(), ["a.png"]);
+  assert.deepEqual(names(parseSourcePicks("2")), ["b.png"]);
+  assert.deepEqual(names(parseSourcePicks("1, 3")), ["a.png", "c.png"]);
+  assert.deepEqual(names(parseSourcePicks("all")), ["a.png", "b.png", "c.png"]);
+  assert.deepEqual(names(parseSourcePicks("9")), ["a.png"]);
+});

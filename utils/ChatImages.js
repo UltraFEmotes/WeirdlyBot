@@ -60,14 +60,12 @@ export function hasChatImage(message) {
 }
 
 export function getDiscordImageUrls(messages) {
-  const urls = new Set();
-  for (const message of messages) {
-    for (const source of imageSources(message)) {
-      urls.add(discordMediaUrl(source.url).href);
-      if (urls.size >= MAX_IMAGES) return [...urls];
-    }
-  }
-  return [...urls];
+  return discordImageUrls(messages.flatMap(imageSources));
+}
+
+/** CDN URLs for already-chosen image sources. */
+export function discordImageUrls(sources) {
+  return [...new Set(sources.map(source => discordMediaUrl(source.url).href))].slice(0, MAX_IMAGES);
 }
 
 export function wantsImageText(text) {
@@ -97,17 +95,13 @@ export async function readDiscordImage(source) {
 }
 
 export async function collectChatImages(messages) {
-  const candidates = [];
+  return readImageSources(messages.flatMap(imageSources));
+}
+
+/** Load already-chosen image sources as data URLs; failed ones are dropped. */
+export async function readImageSources(sources) {
   const seen = new Set();
-  for (const message of messages) {
-    for (const source of imageSources(message)) {
-      if (seen.has(source.url)) continue;
-      seen.add(source.url);
-      candidates.push(source);
-      if (candidates.length >= MAX_IMAGES) break;
-    }
-    if (candidates.length >= MAX_IMAGES) break;
-  }
+  const candidates = sources.filter(source => !seen.has(source.url) && seen.add(source.url)).slice(0, MAX_IMAGES);
   const results = await Promise.allSettled(candidates.map(readDiscordImage));
   return results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []);
 }

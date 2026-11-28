@@ -52,9 +52,9 @@ import { mediaProvenanceReply } from "../utils/MediaProvenance.js";
 import { searchWeb } from "../utils/WebSearch.js";
 import { referenceRoles, webImageReferences, webReferenceIntent } from "../utils/WebImageReference.js";
 import { videoFailureMessage } from "../utils/VideoErrors.js";
-import { collectChatImages, getDiscordImageUrls, hasChatImage, imageMessageContent, imageSources, isImageAttachment, wantsImageText } from "../utils/ChatImages.js";
+import { collectChatImages, discordImageUrls, hasChatImage, readImageSources, imageMessageContent, imageSources, isImageAttachment, wantsImageText } from "../utils/ChatImages.js";
 import { collectVideoFrames, hasChatVideo, isVideoAttachment } from "../utils/ChatVideo.js";
-import { imageEditInstructions, imageEditSources, isImageReplacement, refersToRecentImage } from "../utils/ImageEdits.js";
+import { imageEditInstructions, imageEditSources, isImageReplacement, parseSourcePicks, pickEditImages, refersToRecentImage } from "../utils/ImageEdits.js";
 import { readPage } from "../utils/PageReader.js";
 import { collectChatFiles, hasChatFile } from "../utils/ChatFiles.js";
 import { findStatusToolText, isIncompleteStatusRequest, parseStatusFollowup, parseStatusRequest, setCustomStatus } from "../utils/StatusTool.js";
@@ -1109,11 +1109,12 @@ async function finishTextTool(target, pending, content, replyTo = target) {
   await toolReply(target, { content }, { replyTo }).catch(() => {});
 }
 
-async function runChatMedia(target, msgs, { kind, edit, prompt, duration, model, referenceQueries }, caption, editSources) {
+async function runChatMedia(target, msgs, { kind, edit, prompt, duration, model, referenceQueries, sourcePicks }, caption, editSources) {
   const video = kind === "video";
   const pending = await beginTool(target, kind, caption);
   try {
     let reference = { options: {} };
+    let picked = [];
     const text = msgs.map(message => message.content || "").join("\n");
     const intent = webReferenceIntent(text);
     const h3 = h3LabModelId(model, video);
@@ -1143,9 +1144,12 @@ async function runChatMedia(target, msgs, { kind, edit, prompt, duration, model,
         if (!video && !h3) reference.options.size = "1:1";
         prompt = `${video ? "Animate" : "Edit"} the attached profile picture of ${avatars[0].bot ? "you" : `@${avatars[0].name}`}. ${prompt}`;
       } else {
+        // Several images in the source message: only the ones they picked.
+        picked = pickEditImages(editSources, sourcePicks);
+        if (picked.length) log(`edit source: ${picked.length} of ${editSources.flatMap(imageSources).length} image(s)${sourcePicks ? ` (source=${sourcePicks})` : ""}`, "debug");
         reference.options = h3
-          ? { referenceUrls: getDiscordImageUrls(editSources) }
-          : { references: video ? await getReferenceImages(editSources) : await collectChatImages(editSources) };
+          ? { referenceUrls: discordImageUrls(picked) }
+          : { references: video ? await getReferenceImages(picked) : await readImageSources(picked) };
       }
       if (!(reference.options.references || reference.options.referenceUrls)?.length) {
         await finishTextTool(target, pending, editSources.length
@@ -1162,7 +1166,7 @@ async function runChatMedia(target, msgs, { kind, edit, prompt, duration, model,
           `\nProfile pictures (${avatarRoles(extraAvatars, sourceCount)}): use them for how those people look.`;
       }
       if (!video) {
-        const { instruction, size } = imageEditInstructions(prompt, editSources);
+        const { instruction, size } = imageEditInstructions(prompt, picked.length ? picked : editSources);
         prompt = instruction;
         if (!h3 && size) reference.options.size = size;
         // e.g. "put my cat in front of the eiffel tower": the attachment stays
@@ -1352,7 +1356,9 @@ export async function quotedContext(client, msgs, references = []) {
     const name = referenced.member?.displayName || referenced.author?.globalName || referenced.author?.username || "someone";
     const text = (referenced.content || "").replace(/\s+/g, " ").trim()
       || (referenced.attachments?.size ? "[sent an attachment]" : "(no text)");
-    const media = hasChatImage(referenced) ? " — it contains an image, shown to you; edit or animate it if they ask"
+    const count = imageSources(referenced).length;
+    const media = count > 1 ? ` — it contains ${count} images (numbered 1-${count} in the order shown to you); edit or animate them if they ask`
+      : count ? " — it contains an image, shown to you; edit or animate it if they ask"
       : hasChatVideo(referenced) ? " — it contains a video, shown to you as frames" : "";
     parts.push(isOwn
       ? `[replying to your earlier message: "${text.slice(0, QUOTE_CHARS)}"${media}]`
@@ -1404,17 +1410,22 @@ function cleanContent(client, message) {
     .replace(/\s+/g, " ")
     .trim();
 
+  const imageCount = imageSources(message).length;
+  let imageNumber = 0;
   const labels = [
     ...[...(message.attachments?.values() || [])].map((a) =>
       isImageAttachment(a)
-        ? `[attached an image: ${a.name}]`
+        ? `[attached ${imageCount > 1 ? `image ${++imageNumber}` : "an image"}: ${a.name}]`
         : isVideoAttachment(a)
           ? `[attached a video: ${a.name}]`
           : isAudioAttachment(a)
             ? voiceLabel(message)
             : `[attached a file: ${a.name}]`),
     ...imageSources(message).filter(source => source.kind !== "attachment")
-      .map(source => source.kind === "sticker" ? `[sent a ${source.name}]` : `[shared an image link: ${source.name}]`),
+      .map(source => {
+        const number = imageCount > 1 ? ` (image ${++imageNumber})` : "";
+        return source.kind === "sticker" ? `[sent a ${source.name}${number}]` : `[shared an image link: ${source.name}${number}]`;
+      }),
   ];
   if (labels.length) {
     content += (content ? "\n" : "") + labels.join("\n");
@@ -1472,59 +1483,57 @@ async function normalizeReference(buffer) {
 }
 
 /**
- * Collect attached images and ALWAYS convert them before use:
+ * Convert chosen image sources before use as generation references:
  *   1. download the original → convert locally with sharp (resize + jpeg)
  *   2. if that fails, have discord's media proxy convert it (format=jpeg)
  *   3. last resort: hand the cdn url to the generation api as-is
  * The generation api 400s on large/odd references, so raw original bytes are
  * only ever sent when every conversion path failed.
  */
-async function getReferenceImages(msgs) {
+async function getReferenceImages(sources) {
   const refs = [];
 
-  for (const message of [...msgs].reverse()) {
-    // attachments, embedded image links and stickers share one shape: { url, name, size }
-    for (const attachment of imageSources(message)) {
-      if (refs.length >= 4) return refs;
-      if ((attachment.size || 0) > 10 * 1024 * 1024) continue; // skip huge files
+  // attachments, embedded image links and stickers share one shape: { url, name, size }
+  for (const attachment of sources) {
+    if (refs.length >= 4) return refs;
+    if ((attachment.size || 0) > 10 * 1024 * 1024) continue; // skip huge files
 
-      // 1. download + convert locally
-      try {
-        const response = await axios.get(attachment.url, {
-          responseType: "arraybuffer",
-          timeout: 15000,
-        });
-        const ref = await normalizeReference(Buffer.from(response.data));
-        refs.push(`data:${ref.mime};base64,${ref.buffer.toString("base64")}`);
-        log(
-          `reference image converted: ${(attachment.size / 1024).toFixed(0)} KB attached → ${(ref.buffer.length / 1024).toFixed(0)} KB sent`,
-          "debug"
-        );
-        continue;
-      } catch (error) {
-        log(`reference local conversion failed — ${error.message}`, "debug");
-      }
-
-      // 2. let discord convert it — its media proxy re-encodes to jpeg
-      try {
-        const base = attachment.url.replace("https://cdn.discordapp.com/", "https://media.discordapp.net/");
-        const separator = base.includes("?") ? "&" : "?";
-        const proxyUrl = `${base}${separator}format=jpeg&quality=80&width=1024`;
-        const response = await axios.get(proxyUrl, {
-          responseType: "arraybuffer",
-          timeout: 15000,
-        });
-        refs.push(`data:image/jpeg;base64,${Buffer.from(response.data).toString("base64")}`);
-        log("reference image converted via discord media proxy", "debug");
-        continue;
-      } catch (error) {
-        log(`reference proxy conversion failed — ${error.message}`, "debug");
-      }
-
-      // 3. last resort: hand the cdn url to the generation api as-is
-      log(`reference: all conversion paths failed for ${attachment.name}, sending cdn url`, "warn");
-      refs.push(attachment.url);
+    // 1. download + convert locally
+    try {
+      const response = await axios.get(attachment.url, {
+        responseType: "arraybuffer",
+        timeout: 15000,
+      });
+      const ref = await normalizeReference(Buffer.from(response.data));
+      refs.push(`data:${ref.mime};base64,${ref.buffer.toString("base64")}`);
+      log(
+        `reference image converted: ${(attachment.size / 1024).toFixed(0)} KB attached → ${(ref.buffer.length / 1024).toFixed(0)} KB sent`,
+        "debug"
+      );
+      continue;
+    } catch (error) {
+      log(`reference local conversion failed — ${error.message}`, "debug");
     }
+
+    // 2. let discord convert it — its media proxy re-encodes to jpeg
+    try {
+      const base = attachment.url.replace("https://cdn.discordapp.com/", "https://media.discordapp.net/");
+      const separator = base.includes("?") ? "&" : "?";
+      const proxyUrl = `${base}${separator}format=jpeg&quality=80&width=1024`;
+      const response = await axios.get(proxyUrl, {
+        responseType: "arraybuffer",
+        timeout: 15000,
+      });
+      refs.push(`data:image/jpeg;base64,${Buffer.from(response.data).toString("base64")}`);
+      log("reference image converted via discord media proxy", "debug");
+      continue;
+    } catch (error) {
+      log(`reference proxy conversion failed — ${error.message}`, "debug");
+    }
+
+    // 3. last resort: hand the cdn url to the generation api as-is
+    log(`reference: all conversion paths failed for ${attachment.name}, sending cdn url`, "warn");
+    refs.push(attachment.url);
   }
 
   return refs;
@@ -1609,12 +1618,15 @@ function parseMediaPrompt(raw, video, userModel) {
   const parts = (raw || "").split("|");
   let model;
   let duration;
+  let sourcePicks;
   const referenceQueries = [];
   while (parts.length > 1) {
     const part = parts.at(-1).trim();
     if (/^model\s*=/i.test(part)) {
       const value = selectMediaModel(parts.pop().split("=")[1], video);
       model ??= value;
+    } else if (/^source\s*=/i.test(part)) {
+      sourcePicks ??= parseSourcePicks(parts.pop().split("=")[1]);
     } else if (/^ref\s*=/i.test(part)) {
       const query = part.replace(/^ref\s*=\s*/i, "").trim().slice(0, 150);
       if (query && query !== "-") referenceQueries.unshift(query);
@@ -1626,7 +1638,7 @@ function parseMediaPrompt(raw, video, userModel) {
       break;
     }
   }
-  return { prompt: parts.join("|").replace(/\|\s*$/, "").trim(), duration, model: userModel || model,
+  return { prompt: parts.join("|").replace(/\|\s*$/, "").trim(), duration, model: userModel || model, sourcePicks,
     referenceQueries: referenceQueries.slice(0, MAX_WEB_REFERENCES) };
 }
 
@@ -1786,5 +1798,6 @@ CRITICAL: when someone asks you to make/generate/edit/animate a picture, image, 
 - [[image_edit: prompt]] — edit/restyle an image attached to, linked or quoted by the user, or the image you generated most recently in this channel (e.g. "make this a painting", "put him in a suit", "make it night time"). Use the existing image as the source, not as a prompt for fresh generation. For a small edit, specify only the requested change; keep the face, pose, background and framing unless asked otherwise. Short casual caption is optional.
 - [[video: prompt | seconds]] — generate a short video clip from scratch. ONLY when they clearly ask for a video. describe the subject, action, setting and camera movement in a detailed english prompt, and set the clip length with | and a number from 1 to 15, like [[video: a dog sprinting through tall grass | 8]]. short casual caption as your visible text
 - [[video_edit: prompt | seconds]] — animate an image they attached or replied to into a video (e.g. "make this move", "bring this to life"), or someone's profile picture ("animate @sam's pfp"). describe the motion in a detailed english prompt and set the length with | seconds (1-15) — the image becomes the first frame automatically. short casual caption as visible text
+SEVERAL IMAGES: when the image to edit or animate comes from a message with more than one image, add "| source=N" inside the marker for the one they mean ("the second one" → source=2, "the cat one" → the number of the image showing the cat). to use several together ("combine these", "put them in one pic", "do all of them"), list them: source=1,3 or source=all. with no source, only image 1 is used.
 PROFILE PICTURES: when someone asks for an image or video OF a mentioned person ("@sam as a knight") or of themselves ("me as a cat", "draw me"), their profile picture is attached to the generator automatically. use [[image_gen]] or [[video]] and write the prompt about that person by @name — don't describe their face, the picture covers it. to change or animate the pfp itself ("make my pfp anime", "animate @sam's pfp") use [[image_edit]] or [[video_edit]].`;
 }
