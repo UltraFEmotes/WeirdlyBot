@@ -52,7 +52,7 @@ import { mediaProvenanceReply } from "../utils/MediaProvenance.js";
 import { searchWeb } from "../utils/WebSearch.js";
 import { referenceRoles, webImageReferences, webReferenceIntent } from "../utils/WebImageReference.js";
 import { videoFailureMessage } from "../utils/VideoErrors.js";
-import { collectChatImages, getDiscordImageUrls, hasChatImage, imageMessageContent, imageSources, isImageAttachment, refersToImage, wantsImageText } from "../utils/ChatImages.js";
+import { collectChatImages, getDiscordImageUrls, hasChatImage, imageMessageContent, imageSources, isImageAttachment, wantsImageText } from "../utils/ChatImages.js";
 import { collectVideoFrames, hasChatVideo, isVideoAttachment } from "../utils/ChatVideo.js";
 import { imageEditInstructions, imageEditSources, isImageReplacement, refersToRecentImage } from "../utils/ImageEdits.js";
 import { readPage } from "../utils/PageReader.js";
@@ -481,7 +481,8 @@ function buildRecentContext(client, message) {
       const targetName = target
         ? (target.author?.id === client.user.id ? "you (BOT)" : target.member?.displayName || target.author?.globalName || target.author?.username || "someone")
         : "a message";
-      const quote = target?.content ? `: "${target.content.replace(/\s+/g, " ").slice(0, 80)}"` : "";
+      const quote = (target?.content ? `: "${target.content.replace(/\s+/g, " ").slice(0, 80)}"` : "") +
+        (target && hasChatImage(target) ? " [an image]" : "");
       line += ` → replying to ${targetName}${quote}`;
     }
     return line;
@@ -536,7 +537,7 @@ tool meanings:
 - image: they want a new picture/image/art/drawing generated
 - image_edit: they want an image edited or restyled — one they attached, quoted, linked, or the image you just generated (only possible when such an image is present)
 - video: they want a video clip generated from scratch
-- video_edit: they want an image THEY attached animated into a video (only possible when an image attachment is present)
+- video_edit: they want an image animated into a video — one they attached or replied to (only possible when such an image is present)
 - none: nobody is asking for media generation right now (normal chat, questions, reactions)
 
 if the conversation only mentions generated media but nobody is asking you to make one now, answer none. use the conversation history to build the prompt when their request refers to something said earlier (e.g. "do like a 5s video" after asking for a gta video).`,
@@ -687,15 +688,11 @@ async function processBatch(client, key) {
       const visionMessages = [...msgs];
       if (delegate && hasChatImage(delegate)) visionMessages.push(delegate);
       if (!visionMessages.some(hasChatImage) && editSources.length && replacement) visionMessages.push(...editSources);
-      if (!visionMessages.some(message => hasChatImage(message) || hasChatVideo(message))) {
-        const reply = [...msgs].reverse().find((message) => message.reference?.messageId &&
-          (refersToImage(message.content || "") || /\b(?:video|vid|clip)\b/i.test(message.content || "")));
-        if (reply) {
-          const referenced = referencedMessageFromCache(reply)
-            || await Promise.resolve().then(() => reply.fetchReference?.()).catch(() => null);
-          if (referenced?.channel?.id === reply.channel.id && (hasChatImage(referenced) || hasChatVideo(referenced))) {
-            visionMessages.push(referenced);
-          }
+      // Replying to someone's image ("make him a knight", "what is this") shows
+      // the model that image, whatever words the reply uses.
+      for (const referenced of references) {
+        if (!visionMessages.includes(referenced) && (hasChatImage(referenced) || hasChatVideo(referenced))) {
+          visionMessages.push(referenced);
         }
       }
       const hasImage = visionMessages.some(hasChatImage);
@@ -1355,9 +1352,11 @@ export async function quotedContext(client, msgs, references = []) {
     const name = referenced.member?.displayName || referenced.author?.globalName || referenced.author?.username || "someone";
     const text = (referenced.content || "").replace(/\s+/g, " ").trim()
       || (referenced.attachments?.size ? "[sent an attachment]" : "(no text)");
+    const media = hasChatImage(referenced) ? " — it contains an image, shown to you; edit or animate it if they ask"
+      : hasChatVideo(referenced) ? " — it contains a video, shown to you as frames" : "";
     parts.push(isOwn
-      ? `[replying to your earlier message: "${text.slice(0, QUOTE_CHARS)}"]`
-      : `[replying to ${name}'s message: "${text.slice(0, QUOTE_CHARS)}"]`);
+      ? `[replying to your earlier message: "${text.slice(0, QUOTE_CHARS)}"${media}]`
+      : `[replying to ${name}'s message: "${text.slice(0, QUOTE_CHARS)}"${media}]`);
   }
   return parts.length ? `reply context:\n${parts.join("\n")}` : "";
 }
@@ -1786,6 +1785,6 @@ CRITICAL: when someone asks you to make/generate/edit/animate a picture, image, 
 - [[image_gen: prompt]] — generate a brand-new image. ONLY when they clearly ask for an image/picture/art/drawing. write a detailed english prompt, and a short casual caption as your visible text
 - [[image_edit: prompt]] — edit/restyle an image attached to, linked or quoted by the user, or the image you generated most recently in this channel (e.g. "make this a painting", "put him in a suit", "make it night time"). Use the existing image as the source, not as a prompt for fresh generation. For a small edit, specify only the requested change; keep the face, pose, background and framing unless asked otherwise. Short casual caption is optional.
 - [[video: prompt | seconds]] — generate a short video clip from scratch. ONLY when they clearly ask for a video. describe the subject, action, setting and camera movement in a detailed english prompt, and set the clip length with | and a number from 1 to 15, like [[video: a dog sprinting through tall grass | 8]]. short casual caption as your visible text
-- [[video_edit: prompt | seconds]] — animate an image THEY attached into a video (e.g. "make this move", "bring this to life"), or someone's profile picture ("animate @sam's pfp"). describe the motion in a detailed english prompt and set the length with | seconds (1-15) — the image becomes the first frame automatically. short casual caption as visible text
+- [[video_edit: prompt | seconds]] — animate an image they attached or replied to into a video (e.g. "make this move", "bring this to life"), or someone's profile picture ("animate @sam's pfp"). describe the motion in a detailed english prompt and set the length with | seconds (1-15) — the image becomes the first frame automatically. short casual caption as visible text
 PROFILE PICTURES: when someone asks for an image or video OF a mentioned person ("@sam as a knight") or of themselves ("me as a cat", "draw me"), their profile picture is attached to the generator automatically. use [[image_gen]] or [[video]] and write the prompt about that person by @name — don't describe their face, the picture covers it. to change or animate the pfp itself ("make my pfp anime", "animate @sam's pfp") use [[image_edit]] or [[video_edit]].`;
 }

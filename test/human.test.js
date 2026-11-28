@@ -94,3 +94,12 @@ test("resolveAvatarTargets finds people by name, @name, me and you", async () =>
   assert.deepEqual(names(["you"]).length, 1);
   assert.deepEqual(names(["nobody"]), []);
 });
+
+test("replying to someone's image makes it the edit source", async () => {
+  const { imageEditSources } = await import("../utils/ImageEdits.js");
+  const photo = { id: "p1", content: "", author: { id: "5" }, embeds: [], stickers: new Map(),
+    attachments: new Map([["a", { name: "cat.png", contentType: "image/png", url: "https://cdn.discordapp.com/attachments/1/2/cat.png", width: 800, height: 600 }]]) };
+  const reply = { id: "r1", content: "make him wear a crown", author: { id: "2" }, embeds: [], stickers: new Map(),
+    attachments: new Map(), reference: { messageId: "p1" } };
+  assert.deepEqual(imageEditSources([reply], [photo], null, { botId: "99" }).map(m => m.id), ["p1"]);
+});
