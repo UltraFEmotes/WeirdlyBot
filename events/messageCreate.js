@@ -15,6 +15,10 @@
  *   !whitelistserver    → let the AI talk in the current server
  *   !unwhitelistserver  → remove the current server from the whitelist
  *   !whitelistservers   → list whitelisted servers
+ *   !silentwhitelist <server id> → whitelist a server the account is in,
+ *                                  without posting anything there (selfbot)
+ *   a server invite DM'd by the admin → join it and whitelist it silently
+ *                                       (selfbot)
  *
  * !code <prompt> [--lang <language>] [--dm]
  *   → AI-written code, generated with priority in the background and
@@ -158,6 +162,7 @@ export default {
 
     // admin commands are consumed before anything else — the AI never sees them
     if (handleAdminCommand(client, message)) return;
+    if (await handleAdminInvite(client, message)) return;
     if (/^!forgetme\s*$/i.test(message.content || "")) {
       forgetPerson(message.author.id);
       clearUserHistories(message.author.id);
@@ -274,6 +279,7 @@ function handleAdminCommand(client, message) {
     whitelistserver: cmdWhitelistServer,
     unwhitelistserver: cmdUnwhitelistServer,
     whitelistservers: cmdListServers,
+    silentwhitelist: cmdSilentWhitelist,
   };
 
   if (!commands[name]) return false;
@@ -304,6 +310,54 @@ function cmdWhitelistServer(client, message) {
   message.channel
     .send(`> ✅ whitelisted **${message.guild.name}** — i'll reply to messages here now.`)
     .catch(() => {});
+}
+
+// Silent admin actions answer with a reaction in DMs and nothing at all in a
+// server, so nobody else sees them.
+function ack(message, ok) {
+  if (!message.guild) message.react(ok ? "✅" : "❌").catch(() => {});
+}
+
+/** !silentwhitelist <server id> — whitelist a server without posting there. */
+function cmdSilentWhitelist(client, message) {
+  if (client.user.bot) return message.channel.send("> ⚠️ that command only works in selfbot mode.").catch(() => {});
+  const id = (message.content || "").trim().split(/\s+/)[1]?.replace(/[^\d]/g, "") || message.guild?.id;
+  const guild = id && client.guilds.cache.get(id);
+  if (!guild) {
+    log(`silent whitelist: not in a server with id ${id || "(none given)"}`, "warn");
+    return ack(message, false);
+  }
+  if (!isWhitelisted(guild.id)) addServer(guild);
+  log(`silently whitelisted server "${guild.name}" (${guild.id})`, "info");
+  ack(message, true);
+}
+
+const INVITE_LINK = /(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/([\w-]{2,32})/i;
+
+/**
+ * The admin DMs a server invite: join it and whitelist it, without posting
+ * anything in the server or replying in the DM (just a reaction).
+ * Returns true when the message was consumed.
+ */
+async function handleAdminInvite(client, message) {
+  if (message.guild || client.user.bot || !isAdmin(message.author.id)) return false;
+  const code = (message.content || "").match(INVITE_LINK)?.[1];
+  if (!code) return false;
+  try {
+    const invite = await client.fetchInvite(code);
+    const guildId = invite.guild?.id;
+    if (!guildId) throw new Error("that invite isn't for a server");
+    if (!client.guilds.cache.has(guildId)) await client.acceptInvite(code);
+    const guild = client.guilds.cache.get(guildId) || invite.guild;
+    if (!isWhitelisted(guildId)) addServer(guild);
+    log(`joined and whitelisted "${guild.name}" (${guildId}) from an admin invite`, "info");
+    ack(message, true);
+  } catch (error) {
+    // Expired invites, captchas and bans all land here.
+    log(`couldn't join from admin invite ${code} — ${error.message}`, "warn");
+    ack(message, false);
+  }
+  return true;
 }
 
 function cmdUnwhitelistServer(client, message) {
