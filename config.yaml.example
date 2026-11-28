@@ -57,6 +57,11 @@ behavior:
   # !forgetme to wipe theirs. false disables it.
   people_memory: true
 
+  # when the bot hasn't said anything in a whitelisted server for this long
+  # (or never has), it chimes in once the next time people are chatting there.
+  # 0 disables it.
+  chime_in_after_minutes: 5
+
 persona:
   name: "WeirdlyBot"
   # optional detail that makes the bot feel like a specific person, not a

@@ -89,6 +89,26 @@ export function listServers() {
   return { ...load() };
 }
 
+/** When the account last sent a message in this server (ms), if known. */
+export function lastSpokeAt(guildId) {
+  const at = Date.parse(load()[guildId]?.lastSpokeAt || "");
+  return Number.isFinite(at) ? at : null;
+}
+
+let lastSpokeSave = 0;
+
+/** Remember the account spoke in a whitelisted server (kept exact in memory, saved at most every 10 minutes). */
+export function noteSpoke(guildId, at = Date.now()) {
+  const entry = load()[guildId];
+  const known = lastSpokeAt(guildId);
+  if (!entry || (known !== null && at <= known)) return;
+  entry.lastSpokeAt = new Date(at).toISOString();
+  if (Date.now() - lastSpokeSave >= 10 * 60_000) {
+    lastSpokeSave = Date.now();
+    save();
+  }
+}
+
 export function countServers() {
   return Object.keys(load()).length;
 }

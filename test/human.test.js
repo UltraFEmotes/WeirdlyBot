@@ -103,3 +103,40 @@ test("replying to someone's image makes it the edit source", async () => {
     attachments: new Map(), reference: { messageId: "p1" } };
   assert.deepEqual(imageEditSources([reply], [photo], null, { botId: "99" }).map(m => m.id), ["p1"]);
 });
+
+test("chime-ins wait for a quiet bot and a lively channel", async () => {
+  const { createChimeIns } = await import("../utils/ChimeIn.js");
+  const minute = 60_000;
+  let clock = 100 * minute;
+  const posted = [];
+  let stored = null;
+  let searched = 0;
+  const chimes = createChimeIns({
+    lastSpokeAt: () => stored,
+    noteSpoke: (_, at) => { stored = at; },
+    searchLastSpoke: async () => searched,
+    quietMs: () => 5 * minute,
+    generate: async () => "wait who said that",
+    post: async (_, text) => { posted.push(text); },
+    now: () => clock, random: () => 0, wait: async () => {},
+  });
+  const people = ["a", "b", "a"].map((id, i) => ({ id: String(i), author: { id, bot: false }, content: "lol",
+    createdTimestamp: clock - minute + i }));
+  const channel = { name: "general", permissionsFor: () => ({ has: () => true }),
+    messages: { cache: new Map(people.map(m => [m.id, m])) } };
+  const guild = { id: "g", name: "test" };
+  const message = { ...people.at(-1), channel, guild, client: { user: { id: "bot", bot: false } } };
+
+  await chimes.noteMessage(message); // never spoke there → says something
+  assert.deepEqual(posted, ["wait who said that"]);
+  await chimes.noteMessage(message); // just spoke → stays quiet
+  assert.equal(posted.length, 1);
+
+  clock += 6 * minute; // quiet for 6 minutes, chat still going
+  for (const m of people) m.createdTimestamp = clock - minute;
+  searched = clock - 2 * minute; // but search shows it spoke 2 minutes ago (posted by hand)
+  stored = clock - 7 * minute;
+  await chimes.noteMessage(message);
+  assert.equal(posted.length, 1);
+  assert.equal(stored, searched);
+});
