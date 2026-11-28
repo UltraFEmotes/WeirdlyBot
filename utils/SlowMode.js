@@ -62,4 +62,4 @@ export async function pacedSend(channel, send) {
 setInterval(() => {
   const cutoff = Date.now() - 6 * 60 * 60_000;
   for (const [id, at] of lastSend) if (at < cutoff) lastSend.delete(id);
-}, 10 * 60_000);
+}, 10 * 60_000).unref?.();

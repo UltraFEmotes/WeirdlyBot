@@ -17,7 +17,7 @@ import axios from "axios";
 import { videoApiError } from "./VideoErrors.js";
 import { generateH3LabMedia } from "./H3Lab.js";
 import { h3LabModelId } from "./MediaOptions.js";
-const DEFAULT_IMAGE_MODEL = "nano-banana-2-lite";
+const DEFAULT_IMAGE_MODEL = "qwen-image-3";
 const DEFAULT_VIDEO_MODEL = "gemini-omni-1.2-flash";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -339,8 +339,10 @@ class AIManager {
       const payload = { model, prompt: prompt.trim(), n: 1 };
       if (options.size) payload.size = options.size;
       if (options.resolution) payload.resolution = options.resolution;
+      // Flama's image endpoint reads source/reference images from `images`;
+      // it silently ignores `references` (the video endpoint still uses it).
       if (Array.isArray(options.references) && options.references.length > 0) {
-        payload.references = options.references.slice(0, 4);
+        payload.images = options.references.slice(0, 4);
       }
 
       response = await this.#postMedia(`${baseUrl}/images/generations`, payload, apiKey, timeout, "json");

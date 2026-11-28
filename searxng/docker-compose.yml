@@ -1,0 +1,16 @@
+# Local SearXNG for WeirdlyBot's web and image search.
+# Start: docker compose up -d   (from this folder)
+# Then set SEARXNG_URL=http://127.0.0.1:8888 in the bot's .env.
+services:
+  searxng:
+    image: searxng/searxng:2026.11.23-a7163d091
+    container_name: weirdlybot-searxng
+    restart: unless-stopped
+    # Bound to localhost only: this instance has no rate limiter, so it must
+    # not be reachable from your network.
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?run setup.sh first to create searxng/.env}

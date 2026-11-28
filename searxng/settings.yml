@@ -1,0 +1,70 @@
+# Starts from SearXNG's defaults and only changes what the bot needs.
+use_default_settings: true
+
+general:
+  instance_name: "WeirdlyBot search"
+  # Wikipedia, Wikidata and OpenStreetMap require a contact in the User-Agent.
+  contact_url: "https://github.com/UltraFEmotes/WeirdlyBot"
+
+server:
+  # The secret comes from SEARXNG_SECRET (searxng/.env).
+  limiter: false
+  image_proxy: false
+  public_instance: false
+
+search:
+  safe_search: 1
+  autocomplete: ""
+  # The bot calls /search?format=json.
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 4.0
+  max_request_timeout: 8.0
+  pool_connections: 100
+  pool_maxsize: 20
+
+engines:
+  # Web
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: brave
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: startpage
+    disabled: false
+  - name: wikipedia
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false
+  # Images
+  - name: google images
+    disabled: false
+  - name: bing images
+    disabled: false
+  - name: brave.images
+    disabled: false
+  - name: duckduckgo images
+    disabled: false
+  - name: wikicommons.images
+    disabled: false
+  - name: unsplash
+    disabled: false
+  - name: flickr
+    disabled: false
+  # News
+  - name: bing news
+    disabled: false
+  - name: brave.news
+    disabled: false
+  - name: duckduckgo news
+    disabled: false

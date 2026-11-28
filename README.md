@@ -10,8 +10,15 @@ Official bot mode is recommended. Selfbots violate Discord's Terms of Service an
 - Sometimes adds a short, unprompted comment in a whitelisted channel where it recently participated and the same topic is still active. It waits for a pause, never pings or runs tools, and can comment at most once every four minutes per channel. Set `behavior.on_topic_comment_chance: 0` to disable it (default `0.08` per eligible opportunity).
 - Shows a **typing indicator** while thinking, with random reply delays
 - Makes occasional **typos** and edits the message a few seconds later to correct them
-- Can send **gifs**, **react** to messages, **generate images** (Nano Banana 2 Lite) and **generate videos** (Gemini Omni 1.2 Flash) — the AI invokes these itself
-- If someone **attaches an image**, the AI can **edit it** or **animate it into a video** — attachments are **always converted** before use (sharp: decoded, downscaled to ≤1536px, re-encoded as compact JPEG; fallback to Discord's media proxy for conversion), since the video model rejects large references with a generic 400
+- Can send **gifs**, **react** to messages, **generate images** (Qwen Image 3) and **generate videos** (Gemini Omni 1.2 Flash) — the AI invokes these itself
+- If someone **attaches an image**, the AI can **edit it** or **animate it into a video**. For object swaps like “change the baguette to a wrench,” it uses the original attachment, requests the nearest supported aspect ratio, and asks the model to preserve everything outside the edit. Pasted image links (imgur, Tenor, direct image URLs) and stickers count as images too, and “make it night time” right after it generates an image edits that image without needing a reply.
+- **Remembers people** long-term: after a few exchanges it keeps short notes about each person (preferred name, interests, upcoming things like an exam date, running jokes), scoped per server and per DM like the shared memory. Anyone can say `!forgetme` to wipe their notes and chat history. Set `behavior.people_memory: false` to disable it. Long chats are summarized instead of forgotten, and the current chat survives a restart.
+- **Chimes in when it's been quiet**: if the account hasn't said anything in a whitelisted server for `behavior.chime_in_after_minutes` (default 5), or never has, it waits for people to be chatting, lurks a minute or two, and drops one casual line about what they're talking about. It never announces itself. Set it to 0 to disable.
+- **Feels like a regular**: a fuller persona (`persona.opinions`, `likes`, `dislikes`, `quirks`, `example_messages`, `timezone` in `config.yaml`), a mood that changes day to day, matching how the channel types, using the server's custom emoji, replying with just a reaction when that fits, and a filter that removes assistant tells (em dashes, "great question", lists, repeated openers, a question at the end of every message). Replies take about as long as typing them would (`behavior.typing_chars_per_second`, `max_typing_ms`).
+- **Notices edits and deletes** of messages it just answered: a real edit gets a reply to the new version, a typo fix is ignored, and a delete sometimes gets a short remark (it never sees or repeats the deleted text).
+- **Understands voice messages** by transcribing them locally with whisper.cpp. Set `WHISPER_MODEL_PATH` in `.env` to a ggml model (e.g. `ggml-small.en.bin`); this also enables voice chat transcription.
+- **Profile-picture aware**: @mentions show up as names, it can look at someone's pfp ("what's in @sam's pfp"), and images or videos of a person ("draw @sam as a knight", "make a video of me surfing") use their profile picture as a reference. "Make my pfp anime" or "animate @sam's pfp" edits or animates the pfp itself.
+- **Understands attached videos** by reading six still frames with `ffmpeg`/`ffprobe` (install them and put them on your PATH, e.g. `brew install ffmpeg`). It can't hear audio. Without ffmpeg, it says it couldn't load the video.
 - Tool progress uses reactions instead of filler messages: 🌐 web search, 🎬 video, 🎨 image, 💻 code, 🎞️ GIF lookup, and 🔎 OCR. You can keep chatting while generation runs. If the bot sent a caption for an image or video, it edits that message into the result and replies with just a mention. Without a caption, it sends one final result. Web search doesn’t ping.
 - Media requests retry on HTTP 429/502/503 and retry HTTP 400 once after at least a minute
 - Respects **slowmode**: the bot waits for the channel cooldown on new messages, including delivery notifications. Reactions and edits don't require another send slot.
@@ -63,7 +70,7 @@ Anyone can use these in a whitelisted server or DM, without pinging the AI:
 !vidgen a paper plane gliding through a park --size 16:9 --quality 720p --duration 5 --model gemini-omni-1.2-flash
 ```
 
-All flags are optional. `--size` is an aspect ratio, `--quality` is video resolution, and `--duration` is 1–15 seconds. The default models are Nano Banana 2 Lite and Gemini Omni 1.2 Flash. Video defaults to 720p; other resolutions and durations depend on model support.
+All flags are optional. `--size` is an aspect ratio, `--quality` is video resolution, and `--duration` is 1–15 seconds. The default models are Qwen Image 3 and Gemini Omni 1.2 Flash. Video defaults to 720p; other resolutions and durations depend on model support.
 
 Use `!modellist` to see the bot's image and video model choices and their defaults.
 
@@ -74,7 +81,7 @@ New images and videos are generated without web references by default. The bot l
 !vidgen a slow pan up the Eiffel Tower at dawn --duration 5 --ref "Eiffel Tower Champ de Mars" --ref "Eiffel Tower ironwork close-up"
 ```
 
-The bot tries DuckDuckGo Images via `uv`, then Wikimedia Commons. Both Flama image and video requests can use up to four distinct references, one per search query, and the bot links the sources it uses. Edits to Discord attachments are unchanged. Use public search terms, not private information. If an optional lookup fails, the bot generates normally without adding a warning; explicit requests report missing results.
+The bot searches images via SearXNG (or DDGS without it), then Wikimedia Commons. It downloads the full-size originals when it can (skipping images under 400px), and the chat vision model picks the candidate that actually shows the subject, skipping lookalikes, collages and watermarked stock. Both Flama image and video requests can use up to four distinct references, one per search query, and the bot links the sources it uses. An edit can also add web references after the attached image, e.g. “put my dog next to an accurate Statue of Liberty”. Use public search terms, not private information. If an optional lookup fails, the bot generates normally without adding a warning; explicit requests report missing results.
 
 ### Optional h3lab media models
 
@@ -98,6 +105,8 @@ Only the Discord user configured as `admin_user_id` can use these:
 | `!whitelistserver` | Lets the AI talk in the current server |
 | `!unwhitelistserver` | Removes the current server from the whitelist |
 | `!whitelistservers` | Lists all whitelisted servers |
+| `!silentwhitelist <server id>` | Whitelists a server the account is already in without posting anything there. In a DM it reacts ✅ or ❌. Selfbot mode only |
+| DM a server invite | The account joins the server and whitelists it without saying anything; the DM gets a ✅ or ❌ reaction. Selfbot mode only. Discord usually asks for a captcha on joins: the DM then gets 🧩, and once you join that server by hand on the bot's account (within 24 hours, while the bot is running) it's whitelisted automatically and the 🧩 turns into ✅ |
 
 ## Configuration
 
@@ -109,10 +118,10 @@ Everything lives in `config.yaml`:
 
 ## Web search
 
-Use `!search <query>` or say `search the web for <query>` in a whitelisted server or DM. WeirdlyBot can also search on its own during chat. It answers from search snippets and posts numbered source links. If the AI summary fails, it still posts the links.
+Use `!search <query>` or say `search the web for <query>` in a whitelisted server or DM. WeirdlyBot can also search on its own during chat. It reads the text of the top three result pages (skipping pages that are slow, blocked or need JavaScript), answers with cited sources, and posts numbered source links. Time-sensitive questions also pull dated news results. Results are cached for 10 minutes. If DDGS returns nothing, it falls back to Wikipedia search. If the AI summary fails, it still posts the links.
 
-- **Default (no API key):** Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and make sure `uv` is on your PATH. WeirdlyBot runs a pinned DDGS search script. To install its dependencies before the first search, run `uv sync --script scripts/web-search.py`.
-- **Optional SearXNG:** Set `SEARXNG_URL` in `.env` to the base URL of your SearXNG server with JSON output enabled. This replaces DDGS and doesn't need uv.
+- **Recommended: self-hosted SearXNG (free, no API key, no quota).** It sends each search to Google, Bing, Brave, DuckDuckGo, Startpage, Yahoo, Wikipedia and more at once, so one engine throttling you doesn't break search, and it powers image search for media references (Google, Bing, Brave, DuckDuckGo, Commons, Unsplash and Flickr images). With Docker (on macOS: `brew install colima docker docker-compose && colima start`), run `searxng/setup.sh`, then set `SEARXNG_URL=http://127.0.0.1:8888` in `.env`. It listens on localhost only and restarts with Docker.
+- **Fallback (no setup):** Install [uv](https://docs.astral.sh/uv/getting-started/installation/) and make sure `uv` is on your PATH. WeirdlyBot runs a pinned DDGS search script when SearXNG is unset or unreachable, then falls back to Wikipedia search. To install its dependencies before the first search, run `uv sync --script scripts/web-search.py`.
 
 Queries are sent to the configured search service, so don't include secrets.
 

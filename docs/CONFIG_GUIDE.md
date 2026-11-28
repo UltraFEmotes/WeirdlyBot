@@ -135,7 +135,7 @@ ai:
     api_key_env: "FLAMA_API_KEY"
     base_url: "https://ai.tryflama.com/v1"
     model: "gemini-4-neon"
-    image_model: "nano-banana-2-lite"
+    image_model: "qwen-image-3"
     video_model: "gemini-omni-1.2-flash"
 ```
 
@@ -327,7 +327,7 @@ ai:
     api_key_env: "FLAMA_API_KEY"
     base_url: "https://ai.tryflama.com/v1"
     model: "gemini-4-neon"
-    image_model: "nano-banana-2-lite"
+    image_model: "qwen-image-3"
     video_model: "gemini-omni-1.2-flash"
 
 vc_command:
