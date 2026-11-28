@@ -543,9 +543,10 @@ if an earlier line addresses the bot by name, the following lines from that same
  * Last ~10 messages in the channel (oldest → newest) formatted for the judge.
  * The bot's own messages are labelled BOT so the judge can see its side.
  */
-function buildRecentContext(client, message) {
+export function buildRecentContext(client, message) {
   const cache = message.channel.messages.cache;
-  const recent = [...cache.values()]
+  // Partial messages (from reactions or edits on old messages) have no author.
+  const recent = [...cache.values()].filter(m => m.author)
     .sort((a, b) => a.createdTimestamp - b.createdTimestamp)
     .slice(-10);
 
