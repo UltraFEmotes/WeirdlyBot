@@ -343,8 +343,9 @@ async function handleAdminInvite(client, message) {
   if (message.guild || client.user.bot || !isAdmin(message.author.id)) return false;
   const code = (message.content || "").match(INVITE_LINK)?.[1];
   if (!code) return false;
+  let invite = null;
   try {
-    const invite = await client.fetchInvite(code);
+    invite = await client.fetchInvite(code);
     const guildId = invite.guild?.id;
     if (!guildId) throw new Error("that invite isn't for a server");
     if (!client.guilds.cache.has(guildId)) await client.acceptInvite(code);
@@ -353,11 +354,36 @@ async function handleAdminInvite(client, message) {
     log(`joined and whitelisted "${guild.name}" (${guildId}) from an admin invite`, "info");
     ack(message, true);
   } catch (error) {
-    // Expired invites, captchas and bans all land here.
+    // Discord wants a captcha for most invite joins from a user account. The
+    // admin joins by hand instead, and the server is whitelisted on arrival.
+    if (/CAPTCHA/i.test(error.message) && invite?.guild?.id) {
+      pendingInviteJoins.set(invite.guild.id, { message, expires: Date.now() + PENDING_JOIN_MS });
+      log(`"${invite.guild.name}" needs a captcha to join — join it by hand on this account (discord.gg/${code}) and it'll be whitelisted automatically`, "warn");
+      if (!message.guild) message.react("🧩").catch(() => {});
+      return true;
+    }
+    // Expired invites and bans land here.
     log(`couldn't join from admin invite ${code} — ${error.message}`, "warn");
     ack(message, false);
   }
   return true;
+}
+
+// Servers the admin sent an invite for that needed a captcha: guild id → the
+// DM to react to once the account joins by hand.
+const pendingInviteJoins = new Map();
+const PENDING_JOIN_MS = 24 * 60 * 60_000;
+
+/** guildCreate: whitelist a server joined by hand after a captcha-blocked invite. */
+export function onGuildJoin(guild) {
+  const pending = pendingInviteJoins.get(guild.id);
+  if (!pending) return;
+  pendingInviteJoins.delete(guild.id);
+  if (pending.expires < Date.now()) return;
+  if (!isWhitelisted(guild.id)) addServer(guild);
+  log(`whitelisted "${guild.name}" (${guild.id}) after joining it by hand`, "info");
+  pending.message.reactions?.cache?.get("🧩")?.users?.remove().catch(() => {});
+  pending.message.react("✅").catch(() => {});
 }
 
 function cmdUnwhitelistServer(client, message) {

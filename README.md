@@ -105,7 +105,7 @@ Only the Discord user configured as `admin_user_id` can use these:
 | `!unwhitelistserver` | Removes the current server from the whitelist |
 | `!whitelistservers` | Lists all whitelisted servers |
 | `!silentwhitelist <server id>` | Whitelists a server the account is already in without posting anything there. In a DM it reacts ✅ or ❌. Selfbot mode only |
-| DM a server invite | The account joins the server and whitelists it without saying anything; the DM gets a ✅ or ❌ reaction. Selfbot mode only. Discord may ask for a captcha on joins, which makes it fail (❌) — join that one by hand and use `!silentwhitelist` |
+| DM a server invite | The account joins the server and whitelists it without saying anything; the DM gets a ✅ or ❌ reaction. Selfbot mode only. Discord usually asks for a captcha on joins: the DM then gets 🧩, and once you join that server by hand on the bot's account (within 24 hours, while the bot is running) it's whitelisted automatically and the 🧩 turns into ✅ |
 
 ## Configuration
 
